@@ -16,7 +16,13 @@ router = APIRouter(tags=["jobs"])
 def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto_discover: bool) -> list[str]:
     mine = extract_asin_from_amazon_url(product_url)
     if mine is None:
-        raise HTTPException(status_code=400, detail="Could not resolve ASIN from product_url")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Could not resolve ASIN from product_url. Use a full amazon storefront URL with /dp/ASIN, "
+                "a bare 10-character ASIN, or a short link (amzn.in / amzn.to) that this server can open over HTTP."
+            ),
+        )
 
     if auto_discover:
         return [mine.upper()]

@@ -80,8 +80,10 @@ export default function CompetitiveWorkspace() {
             onChange={(evt) => setMine(evt.target.value)}
           />
           <p className="text-xs text-zinc-500">
-            Accepts full URLs (with or without https), mobile <code className="rounded bg-zinc-100 px-1">/gp/aw/d/</code> links,{" "}
-            <code className="rounded bg-zinc-100 px-1">?asin=</code> query URLs, or a bare 10-character ASIN.
+            Accepts full URLs (with or without https), mobile <code className="rounded bg-zinc-100 px-1">/gp/aw/d/</code>,{" "}
+            <code className="rounded bg-zinc-100 px-1">?asin=</code>, bare ASINs, and short links like{" "}
+            <code className="rounded bg-zinc-100 px-1">amzn.in</code> / <code className="rounded bg-zinc-100 px-1">amzn.to</code> (the API
+            follows redirects to read the final ASIN).
           </p>
         </div>
 
