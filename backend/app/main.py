@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, init_db
 from app.api.jobs import router as jobs_router
+from app.schemas import BootstrapResponse
 
 
 @asynccontextmanager
@@ -34,3 +35,11 @@ app.include_router(jobs_router, prefix="/api")
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/bootstrap", response_model=BootstrapResponse)
+def bootstrap():
+    return BootstrapResponse(
+        scraping_provider=settings.scraping_provider,
+        gemini_configured=bool(settings.google_api_key.strip()),
+    )

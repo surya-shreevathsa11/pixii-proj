@@ -35,6 +35,7 @@ class Job(SQLModel, table=True):
     product_url: Optional[str] = Field(default=None, max_length=2048)
     competitor_urls: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     asins: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    auto_discover_competitors: bool = Field(default=False)
     market_totals_note: Optional[str] = Field(default=None, max_length=1024)
 
     created_at: datetime = Field(default_factory=utc_now)

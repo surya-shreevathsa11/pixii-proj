@@ -14,7 +14,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -68,17 +68,17 @@ class ScraperApiScrapingProvider:
 
     async def _fetch_html(self, target_url: str) -> tuple[str, str]:
         canonical = self._canonical_target_url(target_url)
-        params: dict[str, Any] = {
-            "api_key": self.api_key,
-            "url": canonical,
-        }
+        # ScraperAPI: every API flag must appear *before* `url` in the query string, or routing can break (often 404).
+        # See https://docs.scraperapi.com/synchronous-apis/using-the-api-endpoint
+        query_pairs: list[tuple[str, str]] = [("api_key", self.api_key)]
         if self.render:
-            params["render"] = "true"
+            query_pairs.append(("render", "true"))
         if self.country_code:
-            params["country_code"] = self.country_code
+            query_pairs.append(("country_code", self.country_code))
+        query_pairs.append(("url", canonical))
 
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            rsp = await client.get(self.BASE, params=params)
+            rsp = await client.get(self.BASE, params=query_pairs)
 
         rsp.raise_for_status()
 
@@ -386,6 +386,72 @@ class ScraperApiScrapingProvider:
 
         return listing
 
+    @staticmethod
+    def _asin_from_data_asin_node(node) -> Optional[str]:
+        a = (node.get("data-asin") or "").strip().upper()
+        if len(a) == 10 and a.isalnum() and a.startswith("B"):
+            return a
+        return None
+
+    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
+        """Collect related ASINs from PDP widgets (similar / compare / sponsored carousels)."""
+        site = amazon_site_origin(amazon_domain)
+        target = f"{site}/dp/{asin.upper()}"
+
+        _canonical, html = await self._fetch_html(target)
+        if self._looks_like_blocked(html):
+            return []
+
+        soup = BeautifulSoup(html, "html.parser")
+        primary = asin.upper()
+        out: list[str] = []
+        seen: set[str] = {primary}
+
+        priority_selectors = (
+            "[data-a-carousel-options]",
+            "#product-comparison_feature_div",
+            "#sims-fbt",
+            "#sp_detail",
+            "#sponsoredProducts_feature_div",
+            '[cel_widget_id*="comparator"]',
+            '[cel_widget_id*="similar"]',
+            "#sims-consolidated-1_feature_div",
+            "#sims-constraint-carousel_feature_div",
+            "#sp_detail_thematic-asin_feature_div",
+        )
+
+        def harvest(root) -> None:
+            for node in root.select("[data-asin]"):
+                cand = self._asin_from_data_asin_node(node)
+                if cand and cand not in seen:
+                    seen.add(cand)
+                    out.append(cand)
+                    if len(out) >= limit:
+                        return
+
+        for sel in priority_selectors:
+            for root in soup.select(sel):
+                harvest(root)
+                if len(out) >= limit:
+                    return out[:limit]
+
+        harvest(soup)
+        if len(out) >= limit:
+            return out[:limit]
+
+        for a in soup.select('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'):
+            href = (a.get("href") or "") + ""
+            m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", href, flags=re.I)
+            if m:
+                cand = m.group(1).upper()
+                if cand not in seen and cand.startswith("B") and len(cand) == 10:
+                    seen.add(cand)
+                    out.append(cand)
+            if len(out) >= limit:
+                break
+
+        return out[:limit]
+
     async def fetch_best_seller_asins(self, bestsellers_page_url: str, amazon_domain: str, limit: int) -> list[str]:
         domain_hint = normalize_amazon_domain(amazon_domain)
         target = bestsellers_page_url.strip()
@@ -422,6 +488,27 @@ class ScraperApiScrapingProvider:
             self._dump_debug_html("bestsellers", slug, html, "zero_asins")
 
         return asins[:limit]
+
+    @staticmethod
+    def _review_block_has_customer_images(blk) -> bool:
+        """True when the review DOM includes customer-uploaded photo tiles (Amazon markup varies)."""
+        selectors = (
+            '[data-hook="review-image-tile"]',
+            '[data-hook="setup-image-modal"]',
+            "div.review-image-tile-section",
+            "ul[data-hook='image-block-tiles']",
+            ".review-image-tile-container img",
+            'img[data-hook="review-image-tile"]',
+            '[data-hook="image-block-tiles"]',
+        )
+        for sel in selectors:
+            if blk.select_one(sel):
+                return True
+        for img in blk.select("img"):
+            alt = (img.get("alt") or "") + " " + (img.get("title") or "")
+            if re.search(r"customer\s+image|customer\s+photo|from\s+the\s+manufacturer", alt, re.I):
+                return True
+        return False
 
     def _reviews_from_page(self, asin: str, soup: BeautifulSoup, page: int) -> list[NormalizedReview]:
         out: list[NormalizedReview] = []
@@ -486,6 +573,7 @@ class ScraperApiScrapingProvider:
                 )
 
             if body.strip() or rating is not None or rtitle:
+                has_img = self._review_block_has_customer_images(blk)
                 out.append(
                     NormalizedReview(
                         external_id=ext_id,
@@ -494,6 +582,7 @@ class ScraperApiScrapingProvider:
                         body=body[:8192],
                         review_date=rdate[:32] if rdate else None,
                         is_verified_purchase=vp,
+                        has_customer_images=has_img,
                     )
                 )
 

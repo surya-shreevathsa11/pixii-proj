@@ -42,6 +42,22 @@ class MockScrapingProvider:
 
         return out
 
+    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
+        base = asin.upper().encode() + b"|rivals|" + amazon_domain.encode()
+        out: list[str] = []
+        seen: set[str] = {asin.upper()}
+        i = 0
+        alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        while len(out) < limit:
+            digest = hashlib.sha256(base + str(i).encode()).hexdigest()
+            suffix = "".join(alphabet[int(digest[j : j + 2], 16) % len(alphabet)] for j in range(0, 16, 2))[:9]
+            a = ("B0" + suffix)[:10]
+            if a not in seen:
+                seen.add(a)
+                out.append(a)
+            i += 1
+        return out
+
     async def fetch_reviews_page(
         self,
         asin: str,
@@ -59,6 +75,7 @@ class MockScrapingProvider:
                 f"Review {seed + i}: taste was ok, wished for clearer dosage. "
                 f"Buying again if price stays low. Vegan label matters to me ({asin})."
             )
+            has_img = (seed + i) % 4 == 0
             rows.append(
                 NormalizedReview(
                     external_id=f"{asin}-{page}-{i}",
@@ -67,6 +84,7 @@ class MockScrapingProvider:
                     body=body,
                     review_date=f"2024-{1 + ((seed + i) % 12):02}-15",
                     is_verified_purchase=True,
+                    has_customer_images=has_img,
                 )
             )
         return rows, str(page + 1)

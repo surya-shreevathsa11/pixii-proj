@@ -44,6 +44,9 @@ async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: 
         empty_pages = 0
 
         for rv in rows:
+            if settings.reviews_only_with_customer_images and not getattr(rv, "has_customer_images", False):
+                continue
+
             stmt = (
                 select(Review)
                 .where(Review.job_id == job_id)
@@ -52,6 +55,11 @@ async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: 
             )
             if session.exec(stmt).first():
                 continue
+
+            body = rv.body or ""
+            if getattr(rv, "has_customer_images", False):
+                body = f"[Customer photos in review] {body}".strip()
+
             session.add(
                 Review(
                     job_id=job_id,
@@ -59,7 +67,7 @@ async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: 
                     external_id=rv.external_id,
                     rating=rv.rating,
                     title=rv.title,
-                    body=rv.body,
+                    body=body[:8192],
                     review_date=rv.review_date,
                     is_verified_purchase=rv.is_verified_purchase,
                 )
@@ -100,11 +108,17 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     ).all()
 
     if not reviews_rows:
+        hint = "enable reviews API or widen limits."
+        if settings.reviews_only_with_customer_images:
+            hint += (
+                " With REVIEWS_ONLY_WITH_CUSTOMER_IMAGES enabled, only reviews that include customer photos are kept—"
+                "try SCRAPERAPI_RENDER=true, or set REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false to include all text reviews."
+            )
         stub = Summary(
             job_id=job.id,
             asin=asin,
             map_batches=[],
-            final_summary=f"No synced reviews captured for {asin}; enable reviews API or widen limits.",
+            final_summary=f"No synced reviews captured for {asin}; {hint}",
             key_purchase_criteria=[],
         )
         session.add(stub)
@@ -172,6 +186,27 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 target_asins = [a.upper() for a in job.asins]
                 if not target_asins:
                     raise ValueError("No ASINs supplied for competitive job")
+
+                if job.auto_discover_competitors:
+                    primary = target_asins[0]
+                    job.phase = "Discovering similar ASINs"
+                    persist_job_touch(session, job)
+                    extras = await provider.discover_competitor_asins(primary, amazon_domain, 9)
+                    if not extras:
+                        raise ValueError(
+                            "Auto-discover found no related ASINs on the product page. "
+                            "Try SCRAPERAPI_RENDER=true, paste competitor URLs manually, or send auto_discover_competitors=false."
+                        )
+                    merged: list[str] = []
+                    for a in [primary, *extras]:
+                        ua = a.upper()
+                        if ua not in merged:
+                            merged.append(ua)
+                        if len(merged) >= 10:
+                            break
+                    target_asins = merged
+                    job.asins = target_asins
+                    persist_job_touch(session, job)
 
             job.phase = "Listing metadata ingest"
             persist_job_touch(session, job)

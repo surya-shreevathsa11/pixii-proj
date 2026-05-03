@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
 
+from app.config import settings
 from app.database import get_session
 from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
 from app.schemas import CompetitiveJobCreate, JobCreateResponse, JobDetailResponse, ListingOut, MarketJobCreate, SummaryOut
@@ -12,10 +13,13 @@ from app.services.scraping.util import extract_asin_from_amazon_url
 router = APIRouter(tags=["jobs"])
 
 
-def resolve_competitive_asins(product_url: str, competitor_urls: list[str]) -> list[str]:
+def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto_discover: bool) -> list[str]:
     mine = extract_asin_from_amazon_url(product_url)
     if mine is None:
         raise HTTPException(status_code=400, detail="Could not resolve ASIN from product_url")
+
+    if auto_discover:
+        return [mine.upper()]
 
     output: list[str] = []
     seen: set[str] = {mine.upper()}
@@ -37,6 +41,19 @@ def resolve_competitive_asins(product_url: str, competitor_urls: list[str]) -> l
             break
 
     return [mine.upper(), *output[:9]]
+
+
+def _ingest_demo_from_listings(listings_rows: list[Listing]) -> bool:
+    """True when listings are mock-derived, or (before any listing) the server uses mock scraping."""
+    if not listings_rows:
+        p = settings.scraping_provider.lower().strip()
+        return p not in {"scraperapi", "scraper_api"}
+
+    for row in listings_rows:
+        meta = row.raw_metadata if isinstance(row.raw_metadata, dict) else {}
+        if meta.get("demo") is True:
+            return True
+    return False
 
 
 def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
@@ -63,9 +80,12 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         for row in listings_rows
     ]
 
+    titles_by_asin = {row.asin: (row.title or "").strip() for row in listings_rows}
+
     summaries_out = [
         SummaryOut(
             asin=row.asin,
+            product_title=titles_by_asin.get(row.asin, ""),
             final_summary=row.final_summary,
             key_purchase_criteria=row.key_purchase_criteria or [],
         )
@@ -73,6 +93,9 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
     ]
 
     competitor_urls = job.competitor_urls or []
+
+    ingest_demo = _ingest_demo_from_listings(list(listings_rows))
+    gemini_configured = bool(settings.google_api_key.strip())
 
     return JobDetailResponse(
         id=job.id,
@@ -89,6 +112,8 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         summaries=sorted(summaries_out, key=lambda sm: sm.asin),
         reviews_count_total=len(reviews_total),
         created_at=job.created_at,
+        ingest_demo=ingest_demo,
+        gemini_configured=gemini_configured,
     )
 
 
@@ -98,7 +123,11 @@ def enqueue_competitive_job(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
-    resolved = resolve_competitive_asins(payload.product_url, payload.competitor_urls)
+    resolved = resolve_competitive_asins(
+        payload.product_url,
+        payload.competitor_urls,
+        payload.auto_discover_competitors,
+    )
 
     job = Job(
         flow=JobFlow.competitive,
@@ -107,6 +136,7 @@ def enqueue_competitive_job(
         product_url=payload.product_url.strip(),
         competitor_urls=list(payload.competitor_urls),
         asins=list(resolved),
+        auto_discover_competitors=payload.auto_discover_competitors,
     )
     session.add(job)
     session.commit()

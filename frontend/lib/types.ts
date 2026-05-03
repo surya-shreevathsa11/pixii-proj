@@ -18,6 +18,7 @@ export interface ListingOut {
 
 export interface SummaryOut {
   asin: string;
+  product_title: string;
   final_summary: string;
   key_purchase_criteria: string[];
 }
@@ -37,4 +38,11 @@ export interface JobDetailResponse {
   summaries: SummaryOut[];
   reviews_count_total: number;
   created_at: string;
+  ingest_demo: boolean;
+  gemini_configured: boolean;
+}
+
+export interface BootstrapResponse {
+  scraping_provider: string;
+  gemini_configured: boolean;
 }

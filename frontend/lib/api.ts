@@ -1,5 +1,5 @@
 import { apiBaseUrl } from "@/lib/config";
-import type { JobDetailResponse } from "@/lib/types";
+import type { BootstrapResponse, JobDetailResponse } from "@/lib/types";
 
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
@@ -23,6 +23,7 @@ export async function postMarketJob(bestsellersUrl: string): Promise<{ job_id: s
 export async function postCompetitiveJob(payload: {
   product_url: string;
   competitor_urls: string[];
+  auto_discover_competitors: boolean;
 }): Promise<{ job_id: string }> {
   const resp = await fetch(`${apiBaseUrl()}/api/jobs/competitive`, {
     method: "POST",
@@ -36,5 +37,10 @@ export async function postCompetitiveJob(payload: {
 
 export async function fetchJob(jobId: string): Promise<JobDetailResponse> {
   const resp = await fetch(`${apiBaseUrl()}/api/jobs/${jobId}`, { cache: "no-store" });
+  return handle(resp);
+}
+
+export async function fetchBootstrap(): Promise<BootstrapResponse> {
+  const resp = await fetch(`${apiBaseUrl()}/api/bootstrap`, { cache: "no-store" });
   return handle(resp);
 }

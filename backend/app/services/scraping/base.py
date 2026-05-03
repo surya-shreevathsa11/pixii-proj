@@ -24,6 +24,7 @@ class NormalizedReview:
     body: str
     review_date: Optional[str]
     is_verified_purchase: bool
+    has_customer_images: bool = False
 
 
 class ScrapingProvider(Protocol):
@@ -37,3 +38,5 @@ class ScrapingProvider(Protocol):
         amazon_domain: str,
         page_token: Optional[str],
     ) -> tuple[list[NormalizedReview], Optional[str]]: ...
+
+    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]: ...

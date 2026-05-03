@@ -17,8 +17,11 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
-    max_reviews_per_asin: int = 1000
+    # Cap on reviews persisted per ASIN (competitive flow). When reviews_only_with_customer_images is True,
+    # only reviews that include customer-uploaded photos count toward this cap.
+    max_reviews_per_asin: int = 400
     review_batch_map_size: int = 100
+    reviews_only_with_customer_images: bool = True
 
 
     keepa_api_key: str = ""
