@@ -1,0 +1,8 @@
+backend/.venv/
+backend/var/
+backend/pixii_local.db
+frontend/node_modules/
+frontend/.next/
+.env
+*.pyc
+__pycache__/
