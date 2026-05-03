@@ -21,7 +21,7 @@ export default function MarketWorkspace() {
       const rsp = await postMarketJob(url);
       router.push(`/jobs/${rsp.job_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to enqueue market job.");
+      setError(err instanceof Error ? err.message : "Unable to start market analysis.");
     } finally {
       setBusy(false);
     }

@@ -38,7 +38,7 @@ export default function CompetitiveWorkspace() {
       });
       router.push(`/jobs/${rsp.job_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to enqueue competitor job.");
+      setError(err instanceof Error ? err.message : "Unable to start competitor analysis.");
     } finally {
       setBusy(false);
     }
@@ -53,7 +53,7 @@ export default function CompetitiveWorkspace() {
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">SKU + rivals console</h1>
         <p className="leading-relaxed text-zinc-600">
           Enter your product URL or ASIN. By default we pull related ASINs from Amazon&apos;s product page (similar / sponsored
-          widgets), then harvest listings and reviews. Turn that off to paste up to nine competitor URLs yourself. The job page
+          widgets), then harvest listings and reviews. Turn that off to paste up to nine competitor URLs yourself. The analysis page
           polls the API while the worker runs; Gemini map→reduce needs <code className="rounded bg-zinc-100 px-1 text-xs">GOOGLE_API_KEY</code>{" "}
           when configured.
         </p>
@@ -135,8 +135,8 @@ export default function CompetitiveWorkspace() {
         <p className="text-xs leading-relaxed text-zinc-500">
           Live PDPs and reviews require <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">SCRAPING_PROVIDER=scraperapi</code> and{" "}
           <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">SCRAPING_API_KEY</code> in <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">backend/.env</code>.
-          By default the worker keeps reviews that include <strong>customer photos</strong> (up to <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">MAX_REVIEWS_PER_ASIN</code> per
-          ASIN). Map→reduce needs <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">GOOGLE_API_KEY</code>; otherwise the job page uses stub summaries.
+          Competitive analysis keeps up to <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">COMPETITIVE_REVIEWS_PER_ASIN</code> reviews per ASIN (photo-tagged rows are ranked first when available).
+          <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">GOOGLE_API_KEY</code> enables full Gemini narratives; without it, the analysis page shows fallback summaries.
         </p>
 
         {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}

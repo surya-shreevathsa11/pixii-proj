@@ -86,7 +86,7 @@ function chipVariant(status: JobDetailResponse["status"]) {
 
 function JobLoadingSkeleton() {
   return (
-    <div className="animate-pulse space-y-6" aria-busy="true" aria-label="Loading job">
+    <div className="animate-pulse space-y-6" aria-busy="true" aria-label="Loading analysis">
       <div className="h-10 w-48 rounded bg-zinc-200" />
       <div className="h-24 rounded-xl bg-zinc-100" />
       <div className="grid gap-4 md:grid-cols-4">
@@ -107,7 +107,7 @@ export default function JobInsightPage() {
 
   useEffect(() => {
     if (!jobId) {
-      setError("Missing job identifier.");
+      setError("Missing analysis identifier.");
       return undefined;
     }
 
@@ -189,7 +189,7 @@ export default function JobInsightPage() {
         crumbs={[
           { label: "Pixii Market Intel", href: "/" },
           { label: "Insights", href: "/market" },
-          { label: `Job ${jobIdShort}` },
+          { label: `Analysis ${jobIdShort}` },
         ]}
       />
 
@@ -204,7 +204,7 @@ export default function JobInsightPage() {
             </span>
           </div>
           <h1 className="text-3xl font-semibold">
-            Job{" "}
+            Analysis{" "}
             <span id="job-hash" className="font-mono text-base text-zinc-500">
               {jobId}
             </span>
@@ -227,7 +227,7 @@ export default function JobInsightPage() {
         </div>
         <nav className="flex flex-wrap gap-3 text-sm">
           <Link href="/market" className="text-blue-600 hover:text-blue-500">
-            New market job
+            New market analysis
           </Link>
           <Link href="/competitive" className="text-blue-600 hover:text-blue-500">
             New SKU study
@@ -243,11 +243,11 @@ export default function JobInsightPage() {
           className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
           role="status"
         >
-          <p className="font-semibold">Synthetic ingest for this job</p>
+          <p className="font-semibold">Synthetic data detected for this analysis</p>
           <p className="mt-1 text-amber-900/90">
             Listings match mock or pre-ingest settings (titles like “Demo product” are expected). For live Amazon PDPs,
             configure ScraperAPI in <code className="rounded bg-amber-100/90 px-1 text-xs">backend/.env</code> and run new
-            jobs after restarting the API.
+            analyses after restarting the API.
           </p>
         </div>
       ) : null}
@@ -287,7 +287,7 @@ export default function JobInsightPage() {
               style={{ animationDuration: "1.8s" }}
             />
           </div>
-          <p className="text-xs text-blue-800/90">This page refreshes every few seconds until the job finishes.</p>
+          <p className="text-xs text-blue-800/90">This page refreshes every few seconds until processing finishes.</p>
         </div>
       ) : null}
 
@@ -331,7 +331,7 @@ export default function JobInsightPage() {
               </p>
               {job.flow === "competitive" ? (
                 <p className="mt-2 text-xs text-zinc-500">
-                  Competitive jobs also populate{" "}
+                  Competitive analyses also populate{" "}
                   <a href="#dossiers" className="text-blue-600 hover:underline">
                     review dossiers
                   </a>{" "}
@@ -430,9 +430,9 @@ export default function JobInsightPage() {
 
       {emptyCompetitiveReviews ? (
         <div className="rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900" role="status">
-          <p className="font-semibold">No reviews were stored for this competitive job</p>
+          <p className="font-semibold">No reviews were stored for this competitive analysis</p>
           <p className="mt-1 text-rose-800/90">
-            Competitive jobs normally keep up to ten recent reviews per ASIN (photo reviews ranked first when the
+            Competitive analyses normally keep up to ten recent reviews per ASIN (photo reviews ranked first when the
             scraper marks them). Empty rows usually mean the reviews page did not parse—try{" "}
             <code className="rounded bg-white px-1 text-xs">SCRAPERAPI_RENDER=true</code>, confirm{" "}
             <code className="rounded bg-white px-1 text-xs">AMAZON_DOMAIN</code> matches the storefront, or check ScraperAPI
