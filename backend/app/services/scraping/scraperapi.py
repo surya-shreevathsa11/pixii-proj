@@ -82,6 +82,83 @@ def _category_leaf_tokens(category: str | None) -> set[str]:
     leaf = (segments[-1] if segments else category).lower()
     raw_tokens = re.findall(r"[a-z0-9]+", leaf)
     return {t for t in raw_tokens if len(t) > 2 and t not in _CATEGORY_STOPWORDS}
+
+
+# Color / finish words removed when computing a product fingerprint. Kept narrow on purpose:
+# words like "pro", "plus", "max", "mini" are MODEL qualifiers and stay in the fingerprint.
+_VARIANT_COLOR_WORDS: frozenset[str] = frozenset({
+    "black", "white", "silver", "gold", "rose", "pink", "purple", "violet",
+    "red", "blue", "navy", "teal", "green", "olive", "yellow", "orange",
+    "grey", "gray", "graphite", "charcoal", "midnight", "starlight",
+    "aquamarine", "glacier", "stellar", "space", "titanium", "natural",
+    "deep", "bronze", "champagne", "mint", "cream", "ivory", "beige",
+    "sand", "coral", "lavender", "indigo", "ocean", "sky", "pearl",
+    "obsidian", "onyx", "sapphire", "ruby", "emerald", "amber",
+    "lime", "magenta", "crimson", "burgundy", "phantom", "frost",
+    "crystal", "metallic", "matte", "glossy", "satin", "smooth",
+    "color", "colour", "edition",
+})
+
+# Capacity / quantity tokens that vary across SKUs of the same product family.
+_VARIANT_CAPACITY_RX = re.compile(
+    r"\b("
+    r"\d+\s?(?:gb|tb|mb)|"
+    r"\d+\s?(?:ml|ltr|liter|litre|l)\b|"
+    r"\d+\s?(?:mah|wh|w)\b|"
+    r"\d+\s?(?:gm|gms|g|kg|kgs|oz|lb|lbs)\b|"
+    r"\d+\s?(?:inch|inches|in|cm|mm|ft)\b|"
+    r"\d+\s?ram|"
+    r"\d+\s?storage|"
+    r"\d+\s?pack|pack\s+of\s+\d+|combo\s+of\s+\d+"
+    r")\b",
+    re.I,
+)
+
+# Punctuation/separators that we collapse to spaces before tokenizing.
+_FINGERPRINT_SEP_RX = re.compile(r"[|,/:_\-]+")
+# Bracketed segments commonly carry color/storage/SKU data.
+_BRACKET_RX = re.compile(r"\([^)]*\)|\[[^\]]*\]|\{[^}]*\}")
+# Tokens that should never form part of a fingerprint (filler / marketing words).
+_FINGERPRINT_STOPWORDS: frozenset[str] = frozenset({
+    "amazon", "the", "and", "for", "with", "in", "of", "a", "an", "to",
+    "new", "latest", "model", "version", "edition", "series",
+    "india", "indias", "biggest", "ever", "best", "premium",
+    "free", "delivery", "shipping", "official", "genuine",
+    "smartphone", "smartphones", "phone", "phones", "mobile", "mobiles",
+    "laptop", "laptops", "headphone", "headphones", "earphone", "earphones",
+    "earbuds", "watch", "watches", "tablet", "tablets",
+})
+
+
+def _title_fingerprint(title: str | None) -> str:
+    """Produce a canonical brand+model fingerprint used to collapse variant SKUs.
+
+    Universal across product categories: removes bracketed SKU data, color/finish words,
+    capacity tokens (storage/RAM/battery/volume/weight/length), and generic filler
+    words. Keeps the first ~6 meaningful tokens which typically encode brand + model
+    + key qualifier (e.g. iqoo z10 5g, dell xps 15, sony wh1000xm5).
+    """
+    if not title:
+        return ""
+    text = title.lower()
+    text = _BRACKET_RX.sub(" ", text)
+    text = _VARIANT_CAPACITY_RX.sub(" ", text)
+    text = _FINGERPRINT_SEP_RX.sub(" ", text)
+    text = re.sub(r"[^a-z0-9\s]+", " ", text)
+    tokens = [t for t in text.split() if t]
+    cleaned: list[str] = []
+    for tok in tokens:
+        if tok in _FINGERPRINT_STOPWORDS:
+            continue
+        if tok in _VARIANT_COLOR_WORDS:
+            continue
+        # Drop pure-digit junk that is neither year nor 4G/5G band.
+        if tok.isdigit() and len(tok) > 4:
+            continue
+        cleaned.append(tok)
+        if len(cleaned) >= 6:
+            break
+    return " ".join(cleaned)
 _REVIEW_TITLE_STAR_PREFIX = re.compile(r"^\s*[\d.]+\s*out\s+of\s*5\s*stars\s*", re.I)
 
 

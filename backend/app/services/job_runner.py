@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
 import traceback
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from sqlmodel import Session, select
@@ -10,7 +13,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import engine
 from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
-from app.services.scraping.base import NormalizedReview
+from app.services.scraping.base import NormalizedListing, NormalizedReview
 from app.services.llm_review import (
     batch_map_review_themes,
     format_review_batches,
@@ -30,8 +33,11 @@ from app.services.scraping.scraperapi import (
     _SERVICE_CATEGORY_HINT,
     _UNIVERSAL_SERVICE_TITLE_HINT,
     _category_leaf_tokens,
+    _title_fingerprint,
 )
 from app.services.scraping.util import amazon_domain_from_url, normalize_amazon_domain
+
+logger = logging.getLogger(__name__)
 
 
 def utc_now():
@@ -438,17 +444,25 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     primary_title_for_filter = ""
             primary_is_handset = bool(_HANDSET_PRIMARY_HINT.search(primary_title_for_filter))
 
-            kept_asins: list[str] = []
+            # Pass 1: fetch all candidates, run quality filters (services / off-category / accessories),
+            # but defer persistence so we can dedupe variants and apply price-band ranking with
+            # complete information across the whole candidate set.
+            staged: list[tuple[str, "NormalizedListing"]] = []
+            primary_asin = target_asins[0] if target_asins else ""
             for idx, asin in enumerate(target_asins, start=1):
-                nl = await provider.fetch_listing(asin, amazon_domain)
+                try:
+                    nl = await provider.fetch_listing(asin, amazon_domain)
+                except Exception as exc:
+                    logger.warning("fetch_listing failed for %s (%s): %s", asin, amazon_domain, exc)
+                    if asin == primary_asin:
+                        raise
+                    continue
 
-                if job.flow == JobFlow.competitive and asin != target_asins[0]:
-                    # 1. Universal service/warranty/subscription filter (any product type).
+                if job.flow == JobFlow.competitive and asin != primary_asin:
                     if _is_universal_service_listing(nl.title or "", nl.bsr_category, nl.product_category):
                         job.phase = f"Skipped service/plan listing {asin}"
                         persist_job_touch(session, job)
                         continue
-                    # 2. Category-leaf compatibility check (any product type).
                     if not _categories_compatible(
                         primary_bsr_category,
                         primary_product_category,
@@ -458,7 +472,6 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                         job.phase = f"Skipped off-category listing {asin}"
                         persist_job_touch(session, job)
                         continue
-                    # 3. Handset-specific accessory hint (chargers, cases, cables, etc.).
                     if primary_is_handset and _is_service_or_accessory_listing(
                         nl.title or "", nl.bsr_category, nl.product_category
                     ):
@@ -466,8 +479,76 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                         persist_job_touch(session, job)
                         continue
 
-                kept_asins.append(asin)
+                staged.append((asin, nl))
+                job.phase = f"Fetched listing ({idx}/{total or 1}): {asin}"
+                persist_job_touch(session, job)
 
+            # Pass 2 (competitive only): collapse variant SKUs by title fingerprint, drop extreme
+            # price outliers, then rank by price proximity to the primary. Primary stays at index 0.
+            if job.flow == JobFlow.competitive and staged:
+                primary_pair = staged[0]
+                primary_inr = convert_to_inr(primary_pair[1].price, primary_pair[1].currency, fx_rate)
+
+                # Group competitors by fingerprint, keeping the best representative per group.
+                groups: dict[str, list[tuple[str, "NormalizedListing"]]] = defaultdict(list)
+                for asin, nl in staged[1:]:
+                    fp = _title_fingerprint(nl.title) or asin.lower()
+                    groups[fp].append((asin, nl))
+
+                primary_fp = _title_fingerprint(primary_pair[1].title)
+
+                def _rep_score(item: tuple[str, "NormalizedListing"]) -> tuple[int, float]:
+                    nl = item[1]
+                    return (
+                        -(nl.review_count or 0),
+                        nl.price if nl.price is not None else float("inf"),
+                    )
+
+                deduped: list[tuple[str, "NormalizedListing"]] = []
+                for fp, members in groups.items():
+                    # If a competitor group shares the primary's fingerprint, drop the whole group.
+                    if primary_fp and fp == primary_fp:
+                        for asin, _nl in members:
+                            job.phase = f"Collapsed variant of primary {asin}"
+                            persist_job_touch(session, job)
+                        continue
+                    members_sorted = sorted(members, key=_rep_score)
+                    winner = members_sorted[0]
+                    for asin, _nl in members_sorted[1:]:
+                        job.phase = f"Collapsed variant {asin} (group: {fp[:48]})"
+                        persist_job_touch(session, job)
+                    deduped.append(winner)
+
+                # Drop hard outliers (<=0.33x or >=3x of primary INR price). Skip when either side missing.
+                price_filtered: list[tuple[str, "NormalizedListing"]] = []
+                for asin, nl in deduped:
+                    comp_inr = convert_to_inr(nl.price, nl.currency, fx_rate)
+                    if primary_inr and comp_inr:
+                        ratio = comp_inr / primary_inr
+                        if ratio <= 0.33 or ratio >= 3.0:
+                            job.phase = f"Skipped off-band price outlier {asin} (ratio {ratio:.2f})"
+                            persist_job_touch(session, job)
+                            continue
+                    price_filtered.append((asin, nl))
+
+                # Rank by closeness to primary price (log-distance handles asymmetry well).
+                def _price_distance(item: tuple[str, "NormalizedListing"]) -> float:
+                    if not primary_inr:
+                        return 0.0
+                    comp_inr = convert_to_inr(item[1].price, item[1].currency, fx_rate)
+                    if not comp_inr:
+                        return float("inf")
+                    return abs(math.log(comp_inr / primary_inr))
+
+                price_filtered.sort(key=_price_distance)
+                staged = [primary_pair, *price_filtered][: max(1, len(target_asins))]
+
+            # Pass 3: persist Listing rows for the survivors and clean up any orphaned rows
+            # (e.g. from a previous re-run that had different competitors).
+            kept_asins = [a for a, _ in staged]
+            kept_set = {a.upper() for a in kept_asins}
+
+            for asin, nl in staged:
                 stmt = (
                     select(Listing)
                     .where(Listing.job_id == job.id)
@@ -518,8 +599,12 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 row.raw_metadata = raw_payload
 
                 session.add(row)
-                job.phase = f"Fetched listing ({idx}/{total or 1}): {asin}"
-                persist_job_touch(session, job)
+
+            # Drop any pre-existing Listing rows that are no longer in the survivor set.
+            existing_rows = session.exec(select(Listing).where(Listing.job_id == job.id)).all()
+            for row in existing_rows:
+                if (row.asin or "").upper() not in kept_set:
+                    session.delete(row)
 
             if job.flow == JobFlow.competitive and kept_asins != target_asins:
                 target_asins = kept_asins

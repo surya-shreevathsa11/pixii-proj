@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -9,8 +10,26 @@ import google.generativeai as genai
 from app.config import settings
 
 
+logger = logging.getLogger(__name__)
+
+
 _MODEL_STATE: dict[str, Any | None] = {"fingerprint": None, "handle": None}
 _CONFIGURE_KEY: list[str | None] = [None]
+
+# Patterns that indicate a transient (worth retrying) failure vs a hard one.
+_TRANSIENT_ERROR_RX = re.compile(
+    r"\b(timeout|timed\s*out|deadline|temporar|throttle|throttling|"
+    r"rate\s*limit|429|500|502|503|504|unavailable|reset|aborted|"
+    r"connection|network)\b",
+    re.I,
+)
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+        return True
+    msg = f"{type(exc).__name__}: {exc}"
+    return bool(_TRANSIENT_ERROR_RX.search(msg))
 
 
 def _get_gemini_model() -> genai.GenerativeModel | None:
@@ -50,9 +69,7 @@ def _get_gemini_model() -> genai.GenerativeModel | None:
             last_error = exc
             continue
 
-    import logging
-
-    logging.getLogger(__name__).warning("Gemini unavailable: %s", last_error)
+    logger.warning("Gemini unavailable: %s", last_error)
     _MODEL_STATE["handle"] = None
     _MODEL_STATE["fingerprint"] = fingerprint
     return None
@@ -182,12 +199,7 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
                 "Gemini unavailable; set GOOGLE_API_KEY for single-pass review synthesis. "
                 f"Captured {len(review_lines)} review snippets for {asin}."
             ),
-            key_purchase_criteria=[
-                "Value vs alternatives",
-                "Quality consistency",
-                "Packaging / arrival condition",
-                "Support / returns experience",
-            ],
+            key_purchase_criteria=[],
             why_buyers_like=None,
             why_buyers_caution=None,
         )
@@ -227,15 +239,35 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
             why_buyers_caution=caution,
         )
 
-    try:
-        return await asyncio.to_thread(_invoke)
-    except Exception:
-        return CompetitiveReviewSynthesis(
-            final_summary=f"Synthesis failed safely for {asin}; inspect logs and retry.",
-            key_purchase_criteria=["Trust cues", "Spec clarity", "Fulfillment consistency"],
-            why_buyers_like=None,
-            why_buyers_caution=None,
-        )
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            return await asyncio.to_thread(_invoke)
+        except Exception as exc:
+            last_exc = exc
+            transient = _is_transient_error(exc)
+            logger.exception(
+                "Gemini single-pass synthesis failed for %s on attempt %d (transient=%s): %s",
+                asin,
+                attempt + 1,
+                transient,
+                exc,
+            )
+            if attempt == 0 and transient:
+                await asyncio.sleep(1.5)
+                continue
+            break
+
+    err_label = type(last_exc).__name__ if last_exc else "UnknownError"
+    return CompetitiveReviewSynthesis(
+        final_summary=(
+            f"Gemini synthesis unavailable right now ({err_label}). "
+            f"Showing the {len(review_lines)} captured review snippets for {asin} only."
+        ),
+        key_purchase_criteria=[],
+        why_buyers_like=None,
+        why_buyers_caution=None,
+    )
 
 
 def build_stub_map(title: str) -> dict[str, Any]:

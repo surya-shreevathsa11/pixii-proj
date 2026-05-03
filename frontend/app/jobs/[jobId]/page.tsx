@@ -580,7 +580,7 @@ export default function JobInsightPage() {
                     ) : null}
                     {summary?.key_purchase_criteria?.length ? (
                       <div>
-                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Key PDP purchase criteria</h3>
+                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Key Purchase Criteria</h3>
                         <ul className="mt-3 list-disc space-y-2 pl-5">
                           {summary.key_purchase_criteria.map((criterion) => (
                             <li key={criterion}>{criterion}</li>
