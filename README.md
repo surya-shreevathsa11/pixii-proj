@@ -37,6 +37,7 @@ Optional review ingest:
 
 - **Market jobs**: when `REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=true` (default), only reviews flagged with customer photos are persisted, up to `MAX_REVIEWS_PER_ASIN` (default 400). Set `REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false` to keep all text reviews.
 - **Competitive jobs**: up to `COMPETITIVE_REVIEWS_PER_ASIN` (default 10) recent reviews per ASIN; rows with customer images are ranked ahead of text-only rows, but text reviews still fill the cap. `COMPETITIVE_REVIEW_FETCH_BUFFER` (default 40) controls how many recent rows are fetched before sorting and trimming.
+- **amazon.in + ScraperAPI**: review pages are often JS-heavy. Set `SCRAPERAPI_RENDER=true` in `backend/.env` for the most reliable results; the scraper also retries with `render=true` on `.in` when the first HTML pass returns no review blocks, and can retry the structured reviews endpoint with render. To debug one ASIN from a shell: `cd backend && source .venv/bin/activate && python scripts/fetch_reviews_debug.py B0YOURASIN amazon.in`
 
 On startup, `database.py` applies idempotent patches for newer columns (e.g. `listing.product_category`, `review.has_customer_images`, `summary.why_buyers_like`, `summary.why_buyers_caution`). For manual SQL on older Postgres installs:
 

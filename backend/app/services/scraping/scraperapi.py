@@ -270,11 +270,17 @@ class ScraperApiScrapingProvider:
 
         return canonical, html, rsp.status_code
 
+    @staticmethod
+    def _amazon_in_client_render_heavy(amazon_domain: str) -> bool:
+        return normalize_amazon_domain(amazon_domain).lower().endswith("amazon.in")
+
     async def _fetch_structured_reviews(
         self,
         asin: str,
         amazon_domain: str,
         page: int,
+        *,
+        force_render: bool = False,
     ) -> tuple[list[NormalizedReview], Optional[str], int]:
         """Use ScraperAPI's structured Amazon Reviews endpoint as a fallback.
 
@@ -293,7 +299,7 @@ class ScraperApiScrapingProvider:
             ("country", country),
             ("page", str(page)),
         ]
-        if self.render:
+        if self.render or force_render:
             params.append(("render", "true"))
 
         url = "https://api.scraperapi.com/structured/amazon/review"
@@ -1436,6 +1442,27 @@ class ScraperApiScrapingProvider:
             elif self.save_html_on_empty:
                 self._dump_debug_html("reviews", f"{upper_asin}_p{page}", html, "zero_reviews")
 
+        # amazon.in often returns an empty shell without JS execution; try render before structured API.
+        if not reviews and self._amazon_in_client_render_heavy(amazon_domain):
+            for attempt_url, tag in ((target, "in_prerender_ref"), (alt_target, "in_prerender_alt")):
+                if reviews:
+                    break
+                if tag == "in_prerender_alt" and alt_target == target:
+                    continue
+                rc, hr, sr = await self._fetch_html_lenient(attempt_url, amazon_domain, force_render=True)
+                if sr < 400 and hr:
+                    soup_r = BeautifulSoup(hr, "html.parser")
+                    rr = self._reviews_from_page(upper_asin, soup_r, page)
+                    if rr:
+                        reviews = rr
+                        canonical = rc
+                        strategy = f"product_reviews_html_{tag}"
+                        na_r = soup_r.select_one('li.a-last:not(.a-disabled) a')
+                        next_token = str(page + 1) if na_r else None
+                        if next_token is None and len(rr) >= 8:
+                            next_token = str(page + 1)
+                        break
+
         if not reviews:
             struct_reviews, struct_next, struct_status = await self._fetch_structured_reviews(
                 upper_asin, amazon_domain, page,
@@ -1452,6 +1479,15 @@ class ScraperApiScrapingProvider:
                     struct_status,
                 )
 
+        if not reviews and self._amazon_in_client_render_heavy(amazon_domain):
+            struct2, struct_next2, st2 = await self._fetch_structured_reviews(
+                upper_asin, amazon_domain, page, force_render=True,
+            )
+            if struct2:
+                reviews = struct2
+                next_token = struct_next2
+                strategy = "structured_endpoint_render"
+
         if not reviews and page == 1:
             pdp_target = f"{site}/dp/{upper_asin}"
             pdp_canonical, pdp_html, pdp_status = await self._fetch_html_lenient(pdp_target, amazon_domain)
@@ -1465,6 +1501,18 @@ class ScraperApiScrapingProvider:
                     canonical = pdp_canonical
                 elif self.save_html_on_empty:
                     self._dump_debug_html("pdp_reviews", upper_asin, pdp_html, "pdp_zero_reviews")
+
+        if not reviews and page == 1 and self._amazon_in_client_render_heavy(amazon_domain):
+            pdp_target = f"{site}/dp/{upper_asin}"
+            pc, ph, ps = await self._fetch_html_lenient(pdp_target, amazon_domain, force_render=True)
+            if ps < 400 and ph:
+                soup_p = BeautifulSoup(ph, "html.parser")
+                pr = self._reviews_from_page(upper_asin, soup_p, page)
+                if pr:
+                    reviews = pr
+                    next_token = None
+                    strategy = "pdp_embedded_render"
+                    canonical = pc
 
         if not reviews and page == 1 and alt_target != target:
             ac2, h2, st2 = await self._fetch_html_lenient(alt_target, amazon_domain)
@@ -1481,25 +1529,6 @@ class ScraperApiScrapingProvider:
                         next_token = str(page + 1)
                 elif self.save_html_on_empty:
                     self._dump_debug_html("reviews_alt", f"{upper_asin}_p{page}", h2, "zero_reviews")
-
-        store_host = normalize_amazon_domain(amazon_domain).lower()
-        if not reviews and page == 1 and not self.render and store_host.endswith("amazon.in"):
-            for attempt_url, tag in ((target, "render_ref"), (alt_target, "render_alt")):
-                if reviews:
-                    break
-                rc, hr, sr = await self._fetch_html_lenient(attempt_url, amazon_domain, force_render=True)
-                if sr < 400 and hr:
-                    soup_r = BeautifulSoup(hr, "html.parser")
-                    rr = self._reviews_from_page(upper_asin, soup_r, page)
-                    if rr:
-                        reviews = rr
-                        canonical = rc
-                        strategy = f"product_reviews_html_{tag}"
-                        na_r = soup_r.select_one('li.a-last:not(.a-disabled) a')
-                        next_token = str(page + 1) if na_r else None
-                        if next_token is None and len(rr) >= 8:
-                            next_token = str(page + 1)
-                        break
 
         if reviews and strategy:
             logger.info(

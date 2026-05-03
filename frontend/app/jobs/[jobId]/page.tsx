@@ -522,11 +522,38 @@ export default function JobInsightPage() {
                     </span>
                   </summary>
                   <div className="space-y-4 pt-6 text-sm text-zinc-700">
-                    {asinReviews.length ? (
-                      <details className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3" open>
-                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                          Latest reviews ({asinReviews.length})
-                        </summary>
+                    <details className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3" open>
+                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                        Reviews and purchase drivers ({asinReviews.length} synced)
+                      </summary>
+                      {summary?.why_buyers_like || (summary?.key_purchase_criteria?.length ?? 0) > 0 ? (
+                        <div className="mt-4 rounded-md border border-blue-100/80 bg-white/90 px-4 py-3 shadow-sm">
+                          <h4 className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-900/80">
+                            Key purchase criteria
+                          </h4>
+                          <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                            Synthesized from the synced review snippets below (Gemini).
+                          </p>
+                          {summary?.key_purchase_criteria?.length ? (
+                            <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-zinc-800">
+                              {summary.key_purchase_criteria.map((criterion) => (
+                                <li key={criterion}>{criterion}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          {summary?.why_buyers_like ? (
+                            <>
+                              <h5 className="mt-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                                Why people buy
+                              </h5>
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">
+                                {summary.why_buyers_like}
+                              </p>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {asinReviews.length ? (
                         <ul className="mt-4 space-y-4">
                           {asinReviews.map((rv, idx) => {
                             const bodyClean = cleanReviewBody(rv.body);
@@ -556,8 +583,17 @@ export default function JobInsightPage() {
                             );
                           })}
                         </ul>
-                      </details>
-                    ) : null}
+                      ) : (
+                        <p className="mt-4 text-sm text-zinc-600">
+                          No review snippets synced for this listing. For{" "}
+                          <span className="font-medium">amazon.in</span>, set{" "}
+                          <code className="rounded bg-white px-1 text-xs">SCRAPERAPI_RENDER=true</code> in{" "}
+                          <code className="rounded bg-white px-1 text-xs">backend/.env</code> and confirm{" "}
+                          <code className="rounded bg-white px-1 text-xs">AMAZON_DOMAIN</code> matches the storefront,
+                          then re-run the analysis.
+                        </p>
+                      )}
+                    </details>
                     {summary?.final_summary ? (
                       <article>
                         <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Executive narrative</h3>
@@ -566,27 +602,11 @@ export default function JobInsightPage() {
                     ) : (
                       <p>Gemini output still propagating, or review corpus empty.</p>
                     )}
-                    {summary?.why_buyers_like ? (
-                      <article>
-                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Why buyers like it</h3>
-                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.why_buyers_like}</p>
-                      </article>
-                    ) : null}
                     {summary?.why_buyers_caution ? (
                       <article>
                         <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Why buyers caution</h3>
                         <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.why_buyers_caution}</p>
                       </article>
-                    ) : null}
-                    {summary?.key_purchase_criteria?.length ? (
-                      <div>
-                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Key Purchase Criteria</h3>
-                        <ul className="mt-3 list-disc space-y-2 pl-5">
-                          {summary.key_purchase_criteria.map((criterion) => (
-                            <li key={criterion}>{criterion}</li>
-                          ))}
-                        </ul>
-                      </div>
                     ) : null}
                   </div>
                 </details>
