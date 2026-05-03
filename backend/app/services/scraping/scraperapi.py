@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 _ACCESSORY_TILE_HINT = re.compile(
     r"\b(adapter|chargers?|charging\s+cables?|usb[\s-]?c\b|wall\s+plug|power\s+bricks?|"
     r"apple\s*20w|20\s*w\b|otg\b|\bhubs?\b|\bdocks?\b|"
-    r"applecare|care\s*\+|protection\s+plans?|extended\s+warrant|warranty\s+service|"
+    r"applecare|care\s*\+|protection\s+plans?|protection\s+plan\s+for|"
+    r"damage\s+protection|screen\s+damage|extended\s+warrant|warranty\s+service|"
+    r"\binsurance\b|service\s+plan|onsitego|acko\b|onsite\s+plan|breakage\s+plan|"
     r"\bcases?\b|\bcovers?\b|flip\s+cover|bumper|skins?|tempered\s+glass|screen\s+guards?|protectors?\b|"
     r"magnetic\s+wallet|silicone\s+case|earbuds?|airpods)\b",
     re.I,
@@ -44,6 +46,42 @@ _HANDSET_PRIMARY_HINT = re.compile(
     r"oppo\s+reno|realme|vivo|motorola|smartphone|mobile\s+phones?|5g\s+phone)\b",
     re.I,
 )
+# Category-based service/warranty filter (applied after PDP fetch, when bsr_category / product_category is known).
+_SERVICE_CATEGORY_HINT = re.compile(
+    r"\b(warrant(?:y|ies)|insurance|service\s+plan|protection\s+plan|breakage\s+plan|"
+    r"subscriptions?|memberships?|gift\s+cards?|software\s+downloads?|digital\s+services?)\b",
+    re.I,
+)
+
+# Universal "this is a service/plan/warranty/subscription, not a physical product" filter.
+# Applied to ALL competitive flows regardless of primary product type — a customer comparing
+# laptops, headphones, blenders, anything, never wants warranty plans in the leaderboard.
+_UNIVERSAL_SERVICE_TITLE_HINT = re.compile(
+    r"\b(applecare|care\s*\+|protection\s+plan|damage\s+protection|screen\s+damage|"
+    r"extended\s+warrant|warranty\s+service|\binsurance\b|service\s+plan|"
+    r"onsitego|acko\b|onsite\s+plan|breakage\s+plan|"
+    r"subscription|membership|gift\s+card|software\s+download|"
+    r"installation\s+service|annual\s+maintenance)\b",
+    re.I,
+)
+
+# Stopwords stripped from category leaves before computing overlap between primary & competitor.
+_CATEGORY_STOPWORDS: frozenset[str] = frozenset({
+    "amazon", "the", "and", "for", "with", "in", "of", "a", "an",
+    "electronics", "home", "kitchen", "products", "store", "stores",
+    "best", "sellers", "new", "releases", "all", "see", "more",
+    "&", ">", "/", "|", "-",
+})
+
+
+def _category_leaf_tokens(category: str | None) -> set[str]:
+    """Extract a normalized token set from the leaf-most segment of a breadcrumb-like category string."""
+    if not category:
+        return set()
+    segments = re.split(r"\s*(?:>|/|\|)\s*", category)
+    leaf = (segments[-1] if segments else category).lower()
+    raw_tokens = re.findall(r"[a-z0-9]+", leaf)
+    return {t for t in raw_tokens if len(t) > 2 and t not in _CATEGORY_STOPWORDS}
 _REVIEW_TITLE_STAR_PREFIX = re.compile(r"^\s*[\d.]+\s*out\s+of\s*5\s*stars\s*", re.I)
 
 

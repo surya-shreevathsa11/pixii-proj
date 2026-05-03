@@ -24,11 +24,65 @@ from app.services.revenue import (
     get_usd_inr_rate,
 )
 from app.services.scraping.factory import get_scraping_provider
+from app.services.scraping.scraperapi import (
+    _ACCESSORY_TILE_HINT,
+    _HANDSET_PRIMARY_HINT,
+    _SERVICE_CATEGORY_HINT,
+    _UNIVERSAL_SERVICE_TITLE_HINT,
+    _category_leaf_tokens,
+)
 from app.services.scraping.util import amazon_domain_from_url, normalize_amazon_domain
 
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+def _is_universal_service_listing(title: str, bsr_category: str | None, product_category: str | None) -> bool:
+    """Return True if a listing is a service/plan/warranty/subscription rather than a physical product.
+
+    Product-agnostic. Applied to every competitive job regardless of primary type.
+    """
+    if _UNIVERSAL_SERVICE_TITLE_HINT.search(title or ""):
+        return True
+    for cat in (bsr_category, product_category):
+        if cat and _SERVICE_CATEGORY_HINT.search(cat):
+            return True
+    return False
+
+
+def _categories_compatible(
+    primary_bsr: str | None,
+    primary_cat: str | None,
+    competitor_bsr: str | None,
+    competitor_cat: str | None,
+) -> bool:
+    """Return True when primary & competitor share at least one meaningful category-leaf token.
+
+    Falls back to True (permissive) when either side lacks usable category text, so we never
+    drop competitors purely because the scraper failed to extract a category.
+    """
+    primary_tokens: set[str] = set()
+    primary_tokens.update(_category_leaf_tokens(primary_bsr))
+    primary_tokens.update(_category_leaf_tokens(primary_cat))
+
+    competitor_tokens: set[str] = set()
+    competitor_tokens.update(_category_leaf_tokens(competitor_bsr))
+    competitor_tokens.update(_category_leaf_tokens(competitor_cat))
+
+    if not primary_tokens or not competitor_tokens:
+        return True
+    return bool(primary_tokens & competitor_tokens)
+
+
+def _is_service_or_accessory_listing(title: str, bsr_category: str | None, product_category: str | None) -> bool:
+    """Legacy handset-specific accessory filter, kept for the handset path."""
+    if _ACCESSORY_TILE_HINT.search(title or ""):
+        return True
+    for cat in (bsr_category, product_category):
+        if cat and _SERVICE_CATEGORY_HINT.search(cat):
+            return True
+    return False
 
 
 def persist_job_touch(session: Session, job: Job) -> None:
@@ -370,8 +424,49 @@ async def orchestrate(job_id: uuid.UUID) -> None:
             # Resolve the FX rate once per job so every listing's revenue uses the same INR conversion.
             fx_rate = await get_usd_inr_rate()
 
+            primary_title_for_filter: str = ""
+            primary_bsr_category: str | None = None
+            primary_product_category: str | None = None
+            if job.flow == JobFlow.competitive and target_asins:
+                # Best-effort: derive primary listing fingerprint once for downstream filtering.
+                try:
+                    primary_nl = await provider.fetch_listing(target_asins[0], amazon_domain)
+                    primary_title_for_filter = (primary_nl.title or "").strip()
+                    primary_bsr_category = primary_nl.bsr_category
+                    primary_product_category = primary_nl.product_category
+                except Exception:
+                    primary_title_for_filter = ""
+            primary_is_handset = bool(_HANDSET_PRIMARY_HINT.search(primary_title_for_filter))
+
+            kept_asins: list[str] = []
             for idx, asin in enumerate(target_asins, start=1):
                 nl = await provider.fetch_listing(asin, amazon_domain)
+
+                if job.flow == JobFlow.competitive and asin != target_asins[0]:
+                    # 1. Universal service/warranty/subscription filter (any product type).
+                    if _is_universal_service_listing(nl.title or "", nl.bsr_category, nl.product_category):
+                        job.phase = f"Skipped service/plan listing {asin}"
+                        persist_job_touch(session, job)
+                        continue
+                    # 2. Category-leaf compatibility check (any product type).
+                    if not _categories_compatible(
+                        primary_bsr_category,
+                        primary_product_category,
+                        nl.bsr_category,
+                        nl.product_category,
+                    ):
+                        job.phase = f"Skipped off-category listing {asin}"
+                        persist_job_touch(session, job)
+                        continue
+                    # 3. Handset-specific accessory hint (chargers, cases, cables, etc.).
+                    if primary_is_handset and _is_service_or_accessory_listing(
+                        nl.title or "", nl.bsr_category, nl.product_category
+                    ):
+                        job.phase = f"Skipped accessory listing {asin}"
+                        persist_job_touch(session, job)
+                        continue
+
+                kept_asins.append(asin)
 
                 stmt = (
                     select(Listing)
@@ -424,6 +519,11 @@ async def orchestrate(job_id: uuid.UUID) -> None:
 
                 session.add(row)
                 job.phase = f"Fetched listing ({idx}/{total or 1}): {asin}"
+                persist_job_touch(session, job)
+
+            if job.flow == JobFlow.competitive and kept_asins != target_asins:
+                target_asins = kept_asins
+                job.asins = kept_asins
                 persist_job_touch(session, job)
 
             refreshed = session.exec(select(Listing).where(Listing.job_id == job.id)).all()
