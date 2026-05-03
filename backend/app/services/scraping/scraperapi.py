@@ -9,6 +9,7 @@ samples for tightening selectors locally.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -171,12 +172,14 @@ class ScraperApiScrapingProvider:
         self,
         api_key: str,
         timeout: float = 120.0,
+        render_timeout: float = 300.0,
         render: bool = False,
         country_code: Optional[str] = None,
         save_html_on_empty: bool = False,
     ):
         self.api_key = api_key
         self.timeout = timeout
+        self.render_timeout = max(timeout, render_timeout)
         self.render = render
         explicit_cc = (country_code or "").strip().lower()
         self.country_code = explicit_cc or None
@@ -240,8 +243,41 @@ class ScraperApiScrapingProvider:
             query_pairs.append(("country_code", country))
         query_pairs.append(("url", canonical))
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            rsp = await client.get(self.BASE, params=query_pairs)
+        uses_render = bool(self.render or force_render)
+        read_timeout = self.render_timeout if uses_render else self.timeout
+        # Separate caps: connect can stay short; read must be generous for ScraperAPI + JS render queues.
+        httpx_timeout = httpx.Timeout(read_timeout, connect=30.0, write=read_timeout, pool=30.0)
+
+        rsp: httpx.Response | None = None
+        last_net_exc: BaseException | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=httpx_timeout, follow_redirects=True) as client:
+                    rsp = await client.get(self.BASE, params=query_pairs)
+                break
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                last_net_exc = exc
+                logger.warning(
+                    "ScraperAPI GET timeout/connection issue (attempt %s/3, render=%s, read_timeout=%ss): %s",
+                    attempt + 1,
+                    uses_render,
+                    read_timeout,
+                    exc,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(2.0 * (attempt + 1))
+                    continue
+                if raise_on_error:
+                    raise
+                logger.error(
+                    "ScraperAPI gave up after 3 attempts for %s (render=%s): %s",
+                    canonical[:120],
+                    uses_render,
+                    last_net_exc,
+                )
+                return canonical, "", 504
+
+        assert rsp is not None
 
         if raise_on_error:
             rsp.raise_for_status()
@@ -299,15 +335,38 @@ class ScraperApiScrapingProvider:
             ("country", country),
             ("page", str(page)),
         ]
-        if self.render or force_render:
+        uses_render = bool(self.render or force_render)
+        if uses_render:
             params.append(("render", "true"))
 
         url = "https://api.scraperapi.com/structured/amazon/review"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                rsp = await client.get(url, params=params)
-        except httpx.HTTPError as exc:
-            logger.warning("ScraperAPI structured reviews call failed for %s p%s: %s", asin, page, exc)
+        read_timeout = self.render_timeout if uses_render else self.timeout
+        httpx_timeout = httpx.Timeout(read_timeout, connect=30.0, write=read_timeout, pool=30.0)
+        rsp: httpx.Response | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=httpx_timeout, follow_redirects=True) as client:
+                    rsp = await client.get(url, params=params)
+                break
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                logger.warning(
+                    "ScraperAPI structured reviews timeout (attempt %s/3, render=%s): %s p%s: %s",
+                    attempt + 1,
+                    uses_render,
+                    asin,
+                    page,
+                    exc,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(2.0 * (attempt + 1))
+                    continue
+                logger.error("ScraperAPI structured reviews abandoned after timeouts for %s p%s", asin, page)
+                return [], None, 0
+            except httpx.HTTPError as exc:
+                logger.warning("ScraperAPI structured reviews call failed for %s p%s: %s", asin, page, exc)
+                return [], None, 0
+
+        if rsp is None:
             return [], None, 0
 
         if rsp.status_code >= 400:

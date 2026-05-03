@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     scraperapi_render: bool = False
     scraperapi_country_code: str = ""
     scraperapi_save_html_on_empty: bool = False
+    # httpx read timeout for ScraperAPI (plain HTML). Rendered requests use scraperapi_render_timeout_seconds.
+    scraperapi_timeout_seconds: float = 120.0
+    # Longer timeout for render=true (amazon.in review pages often exceed 120s).
+    scraperapi_render_timeout_seconds: float = 300.0
     amazon_domain: str = "amazon.com"
 
     google_api_key: str = ""

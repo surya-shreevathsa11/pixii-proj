@@ -21,6 +21,8 @@ def get_scraping_provider() -> ScrapingProvider:
             render=settings.scraperapi_render,
             country_code=country,
             save_html_on_empty=settings.scraperapi_save_html_on_empty,
+            timeout=float(settings.scraperapi_timeout_seconds),
+            render_timeout=float(settings.scraperapi_render_timeout_seconds),
         )
 
     return MockScrapingProvider()
