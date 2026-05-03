@@ -13,7 +13,7 @@ from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
 from app.services.llm_review import batch_map_review_themes, format_review_batches, reduce_review_map
 from app.services.revenue import estimate_monthly_units_from_bsr, monthly_revenue_from_units
 from app.services.scraping.factory import get_scraping_provider
-from app.services.scraping.util import normalize_amazon_domain
+from app.services.scraping.util import amazon_domain_from_url, normalize_amazon_domain
 
 
 def utc_now():
@@ -153,13 +153,17 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
 
 async def orchestrate(job_id: uuid.UUID) -> None:
     provider = get_scraping_provider()
-    amazon_domain = normalize_amazon_domain(settings.amazon_domain)
+    default_amazon_domain = normalize_amazon_domain(settings.amazon_domain)
 
     try:
         with Session(engine) as session:
             job = session.get(Job, job_id)
             if job is None:
                 return
+
+            # Prefer the storefront host from the job's URL (e.g. amazon.in) over the global default.
+            inferred = amazon_domain_from_url(job.bestsellers_url or job.product_url or "")
+            amazon_domain = inferred or default_amazon_domain
 
             job.status = JobStatus.running
             job.phase = "Initializing"

@@ -75,6 +75,56 @@ def _canonicalize_url_for_parse(raw: str) -> tuple[str, ParseResult | None]:
     return for_parsing, parsed
 
 
+_KNOWN_AMAZON_TLDS = (
+    "amazon.com.mx",
+    "amazon.co.uk",
+    "amazon.co.jp",
+    "amazon.com.au",
+    "amazon.com.br",
+    "amazon.com",
+    "amazon.ca",
+    "amazon.de",
+    "amazon.fr",
+    "amazon.it",
+    "amazon.es",
+    "amazon.in",
+    "amazon.nl",
+    "amazon.se",
+    "amazon.pl",
+    "amazon.sg",
+    "amazon.ae",
+)
+
+
+def amazon_domain_from_url(url: str) -> str | None:
+    """Return a normalized Amazon storefront host (e.g. 'amazon.in') extracted from a URL, or None."""
+    if not url:
+        return None
+    raw = url.strip()
+    if not raw:
+        return None
+    if not re.match(r"^https?://", raw, flags=re.I):
+        raw = "https://" + raw.lstrip("/")
+    try:
+        host = (urlparse(raw).netloc or "").lower()
+    except ValueError:
+        return None
+    if not host:
+        return None
+    host = host.split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    for tld in _KNOWN_AMAZON_TLDS:
+        if host == tld or host.endswith("." + tld):
+            return tld
+    # Short-link shortcuts where the storefront is implicit
+    if host in ("amzn.in",):
+        return "amazon.in"
+    if host in ("a.co",):
+        return "amazon.com"
+    return None
+
+
 def _amazon_host(host: str) -> bool:
     h = (host or "").lower()
     if not h:

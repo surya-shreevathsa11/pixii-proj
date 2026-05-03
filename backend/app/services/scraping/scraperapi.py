@@ -21,7 +21,11 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.services.scraping.base import NormalizedListing, NormalizedReview
-from app.services.scraping.util import amazon_site_origin, normalize_amazon_domain
+from app.services.scraping.util import (
+    amazon_site_origin,
+    normalize_amazon_domain,
+    resolve_scraperapi_country_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +46,19 @@ class ScraperApiScrapingProvider:
         self.api_key = api_key
         self.timeout = timeout
         self.render = render
-        self.country_code = (country_code or "").strip().lower() or None
+        explicit_cc = (country_code or "").strip().lower()
+        self.country_code = explicit_cc or None
+        self._explicit_country = bool(explicit_cc)
         self.save_html_on_empty = save_html_on_empty
         self._debug_dir = Path(__file__).resolve().parents[3] / "var" / "debug_scraperapi"
+
+    def _country_for(self, amazon_domain: Optional[str]) -> Optional[str]:
+        """Use explicit country if set; otherwise infer from the storefront domain (per call)."""
+        if self._explicit_country and self.country_code:
+            return self.country_code
+        if amazon_domain:
+            return resolve_scraperapi_country_code("", amazon_domain)
+        return self.country_code
 
     def _canonical_target_url(self, url: str) -> str:
         url = url.strip()
@@ -66,15 +80,16 @@ class ScraperApiScrapingProvider:
         except OSError as exc:
             logger.warning("Could not save debug HTML: %s", exc)
 
-    async def _fetch_html(self, target_url: str) -> tuple[str, str]:
+    async def _fetch_html(self, target_url: str, amazon_domain: Optional[str] = None) -> tuple[str, str]:
         canonical = self._canonical_target_url(target_url)
         # ScraperAPI: every API flag must appear *before* `url` in the query string, or routing can break (often 404).
         # See https://docs.scraperapi.com/synchronous-apis/using-the-api-endpoint
         query_pairs: list[tuple[str, str]] = [("api_key", self.api_key)]
         if self.render:
             query_pairs.append(("render", "true"))
-        if self.country_code:
-            query_pairs.append(("country_code", self.country_code))
+        country = self._country_for(amazon_domain)
+        if country:
+            query_pairs.append(("country_code", country))
         query_pairs.append(("url", canonical))
 
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
@@ -84,8 +99,15 @@ class ScraperApiScrapingProvider:
 
         ctype = rsp.headers.get("content-type") or ""
 
-        encoding = rsp.apparent_encoding or "utf-8"
-        html = rsp.content.decode(encoding, errors="replace")
+        encoding = (
+            getattr(rsp, "charset_encoding", None)
+            or rsp.encoding
+            or "utf-8"
+        )
+        try:
+            html = rsp.content.decode(encoding, errors="replace")
+        except (LookupError, TypeError):
+            html = rsp.content.decode("utf-8", errors="replace")
 
         if "application/json" in ctype.lower():
             try:
@@ -358,7 +380,7 @@ class ScraperApiScrapingProvider:
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
 
-        canonical, html = await self._fetch_html(target)
+        canonical, html = await self._fetch_html(target, amazon_domain)
 
         if self._looks_like_blocked(html):
             return NormalizedListing(
@@ -398,7 +420,7 @@ class ScraperApiScrapingProvider:
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
 
-        _canonical, html = await self._fetch_html(target)
+        _canonical, html = await self._fetch_html(target, amazon_domain)
         if self._looks_like_blocked(html):
             return []
 
@@ -458,7 +480,7 @@ class ScraperApiScrapingProvider:
         if not target.startswith("http"):
             target = f"{amazon_site_origin(domain_hint)}{'/' + target if not target.startswith('/') else target}"
 
-        _canonical, html = await self._fetch_html(target)
+        _canonical, html = await self._fetch_html(target, domain_hint)
         soup = BeautifulSoup(html, "html.parser")
 
         asins: list[str] = []
@@ -606,7 +628,7 @@ class ScraperApiScrapingProvider:
         parts = urlsplit(site)
         target = urlunsplit((parts.scheme, parts.netloc, path, query, ""))
 
-        _canonical, html = await self._fetch_html(target)
+        _canonical, html = await self._fetch_html(target, amazon_domain)
         soup = BeautifulSoup(html, "html.parser")
 
         reviews = self._reviews_from_page(asin.upper(), soup, page)

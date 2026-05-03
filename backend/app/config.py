@@ -1,8 +1,18 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_ENV_FILE = _BACKEND_ROOT / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # Always load backend/.env (not cwd-relative), so one file is canonical regardless of where uvicorn is started.
+    model_config = SettingsConfigDict(
+        env_file=str(_DEFAULT_ENV_FILE) if _DEFAULT_ENV_FILE.is_file() else ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     database_url: str = "postgresql://pixii:pixii@localhost:5432/amazon_analytics"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
