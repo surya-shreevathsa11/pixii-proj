@@ -35,6 +35,14 @@ function flowBadge(flow: AnalysisHistoryEntry["flow"]): string {
   return flow === "market" ? "Market" : "Competitive";
 }
 
+function truncate(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) {
+    return t;
+  }
+  return `${t.slice(0, max - 1)}…`;
+}
+
 export function RecentAnalyses() {
   const [items, setItems] = useState<AnalysisHistoryEntry[]>([]);
 
@@ -70,10 +78,19 @@ export function RecentAnalyses() {
     );
   }
 
+  const latestLabel = items[0]?.label?.trim();
+
   return (
     <aside className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm" aria-label="Recent analyses">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-zinc-900">Recent analyses</p>
+        <div>
+          <p className="text-sm font-semibold text-zinc-900">Recent analyses</p>
+          {latestLabel ? (
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Latest: <span className="font-medium text-zinc-700">{truncate(latestLabel, 72)}</span>
+            </p>
+          ) : null}
+        </div>
         <button
           type="button"
           onClick={onClear}
@@ -99,11 +116,7 @@ export function RecentAnalyses() {
                 </span>
                 <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{row.label}</span>
               </div>
-              <div className="mt-0.5 pl-0 text-xs text-zinc-500">
-                <span className="font-mono text-[11px] text-zinc-400">{row.jobId.slice(0, 8)}…</span>
-                <span className="mx-1.5 text-zinc-300">·</span>
-                {formatRelativeTime(row.createdAt)}
-              </div>
+              <div className="mt-0.5 text-xs text-zinc-500">{formatRelativeTime(row.createdAt)}</div>
             </Link>
           </li>
         ))}

@@ -26,6 +26,63 @@ const inrPriceFmt = new Intl.NumberFormat("en-IN", {
 
 const numberFmt = new Intl.NumberFormat("en-IN");
 
+function truncateHeadline(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) {
+    return t;
+  }
+  return `${t.slice(0, max - 1)}…`;
+}
+
+function analysisPageHeadline(job: JobDetailResponse | null): { title: string; subtitle?: string } {
+  if (!job) {
+    return { title: "Analysis" };
+  }
+  const primaryAsin = job.asins[0];
+  const primaryListing = job.listings.find((l) => l.asin === primaryAsin) ?? job.listings[0];
+  const listingTitle = (primaryListing?.title || "").trim();
+
+  if (job.flow === "competitive") {
+    if (listingTitle) {
+      return { title: truncateHeadline(listingTitle, 140), subtitle: "Competitive diagnostics" };
+    }
+    const url = job.product_url?.trim();
+    if (url) {
+      return { title: truncateHeadline(url, 100), subtitle: "Competitive diagnostics" };
+    }
+    return { title: "Competitive diagnostics" };
+  }
+
+  if (listingTitle) {
+    return { title: truncateHeadline(listingTitle, 140), subtitle: "Market sizing" };
+  }
+  const bu = job.bestsellers_url?.trim();
+  if (bu) {
+    return { title: "Market sizing", subtitle: truncateHeadline(bu, 120) };
+  }
+  return { title: "Market sizing" };
+}
+
+const STAR_TITLE_PREFIX = /^\s*[\d.]+\s*out\s+of\s*5\s*stars\s*/i;
+
+function cleanReviewTitle(title: string | null | undefined): string | undefined {
+  if (!title) {
+    return undefined;
+  }
+  const t = title.replace(STAR_TITLE_PREFIX, "").trim();
+  return t || undefined;
+}
+
+const PHOTO_REVIEW_PREFIX = "[Customer photos in review]";
+
+function cleanReviewBody(body: string): string {
+  let b = body.trim();
+  if (b.startsWith(PHOTO_REVIEW_PREFIX)) {
+    b = b.slice(PHOTO_REVIEW_PREFIX.length).trim();
+  }
+  return b;
+}
+
 function formatListingCategory(listing: JobDetailResponse["listings"][number]) {
   const browse = listing.product_category?.trim();
   if (browse) {
@@ -172,6 +229,8 @@ export default function JobInsightPage() {
     return sum;
   }, [job]);
 
+  const headline = useMemo(() => analysisPageHeadline(job), [job]);
+
   if (!jobId) {
     return null;
   }
@@ -180,7 +239,6 @@ export default function JobInsightPage() {
   const ingestDemo = job?.ingest_demo ?? false;
   const geminiConfigured = job?.gemini_configured ?? false;
   const isActive = job && (job.status === "queued" || job.status === "running");
-  const jobIdShort = jobId.length > 12 ? `${jobId.slice(0, 8)}…` : jobId;
   const emptyCompetitiveReviews =
     job?.flow === "competitive" && job.status === "completed" && job.reviews_count_total === 0;
 
@@ -190,7 +248,7 @@ export default function JobInsightPage() {
         crumbs={[
           { label: "Pixii Market Intel", href: "/" },
           { label: "Insights", href: "/market" },
-          { label: `Analysis ${jobIdShort}` },
+          { label: truncateHeadline(headline.title, 48) },
         ]}
       />
 
@@ -206,12 +264,8 @@ export default function JobInsightPage() {
               {job?.status ?? "queued"}
             </span>
           </div>
-          <h1 className="text-3xl font-semibold">
-            Analysis{" "}
-            <span id="job-hash" className="font-mono text-base text-zinc-500">
-              {jobId}
-            </span>
-          </h1>
+          <h1 className="text-3xl font-semibold leading-snug text-zinc-900">{headline.title}</h1>
+          {headline.subtitle ? <p className="text-sm text-zinc-600">{headline.subtitle}</p> : null}
           <div className="space-y-1 text-sm text-zinc-600">
             <div>
               Flow:{" "}
@@ -470,6 +524,42 @@ export default function JobInsightPage() {
                     </span>
                   </summary>
                   <div className="space-y-4 pt-6 text-sm text-zinc-700">
+                    {asinReviews.length ? (
+                      <details className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3" open>
+                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                          Latest reviews ({asinReviews.length})
+                        </summary>
+                        <ul className="mt-4 space-y-4">
+                          {asinReviews.map((rv, idx) => {
+                            const bodyClean = cleanReviewBody(rv.body);
+                            const preview =
+                              bodyClean.length > 360 ? `${bodyClean.slice(0, 360).trimEnd()}…` : bodyClean;
+                            const rvTitle = cleanReviewTitle(rv.title);
+                            const metaLine = [
+                              rv.rating != null ? `★ ${rv.rating}` : null,
+                              rv.review_date,
+                              rv.verified ? "Verified" : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ");
+                            return (
+                              <li key={`${listing.asin}-rv-${idx}`} className="text-sm">
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                                  <span>{metaLine || "Review"}</span>
+                                  {rv.has_customer_images ? (
+                                    <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+                                      Photos
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {rvTitle ? <p className="mt-1 font-medium text-zinc-800">{rvTitle}</p> : null}
+                                <p className="mt-1 leading-relaxed text-zinc-600">{preview}</p>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </details>
+                    ) : null}
                     {summary?.final_summary ? (
                       <article>
                         <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Executive narrative</h3>
@@ -499,36 +589,6 @@ export default function JobInsightPage() {
                           ))}
                         </ul>
                       </div>
-                    ) : null}
-                    {asinReviews.length ? (
-                      <details className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3">
-                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                          Latest reviews ({asinReviews.length})
-                        </summary>
-                        <ul className="mt-4 space-y-4">
-                          {asinReviews.map((rv, idx) => {
-                            const preview =
-                              rv.body.length > 360 ? `${rv.body.slice(0, 360).trimEnd()}…` : rv.body;
-                            const headline = [rv.rating != null ? `★${rv.rating}` : null, rv.review_date, rv.verified ? "Verified" : null]
-                              .filter(Boolean)
-                              .join(" · ");
-                            return (
-                              <li key={`${listing.asin}-rv-${idx}`} className="text-sm">
-                                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                                  <span>{headline || "Review"}</span>
-                                  {rv.has_customer_images ? (
-                                    <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
-                                      Photos
-                                    </span>
-                                  ) : null}
-                                </div>
-                                {rv.title ? <p className="mt-1 font-medium text-zinc-800">{rv.title}</p> : null}
-                                <p className="mt-1 leading-relaxed text-zinc-600">{preview}</p>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </details>
                     ) : null}
                   </div>
                 </details>

@@ -21,6 +21,15 @@ from app.services.scraping.util import extract_asin_from_amazon_url
 
 router = APIRouter(tags=["jobs"])
 
+_REVIEW_BODY_LEGACY_PREFIX = "[Customer photos in review]"
+
+
+def _review_body_for_api(text: str | None, cap: int = 2000) -> str:
+    b = (text or "").strip()
+    if b.startswith(_REVIEW_BODY_LEGACY_PREFIX):
+        b = b[len(_REVIEW_BODY_LEGACY_PREFIX) :].lstrip()
+    return b[:cap]
+
 
 def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto_discover: bool) -> list[str]:
     mine = extract_asin_from_amazon_url(product_url)
@@ -126,7 +135,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
     reviews_out: list[ReviewOut] = []
     for asin_key in sorted(picked_by_asin.keys()):
         for rv in reversed(picked_by_asin[asin_key]):
-            snippet = (rv.body or "")[:2000]
+            snippet = _review_body_for_api(rv.body, 2000)
             reviews_out.append(
                 ReviewOut(
                     asin=rv.asin,

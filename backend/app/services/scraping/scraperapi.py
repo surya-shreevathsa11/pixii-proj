@@ -30,6 +30,22 @@ from app.services.scraping.util import (
 
 logger = logging.getLogger(__name__)
 
+# Competitor discovery: drop tiles that look like accessories/services when the PDP is a handset-class product.
+_ACCESSORY_TILE_HINT = re.compile(
+    r"\b(adapter|chargers?|charging\s+cables?|usb[\s-]?c\b|wall\s+plug|power\s+bricks?|"
+    r"apple\s*20w|20\s*w\b|otg\b|\bhubs?\b|\bdocks?\b|"
+    r"applecare|care\s*\+|protection\s+plans?|extended\s+warrant|warranty\s+service|"
+    r"\bcases?\b|\bcovers?\b|flip\s+cover|bumper|skins?|tempered\s+glass|screen\s+guards?|protectors?\b|"
+    r"magnetic\s+wallet|silicone\s+case|earbuds?|airpods)\b",
+    re.I,
+)
+_HANDSET_PRIMARY_HINT = re.compile(
+    r"\b(iphone|pixel\s+\d|galaxy\s+s\d|galaxy\s+z\s|galaxy\s+a\d|oneplus|xiaomi|redmi|poco|nothing\s+phone|"
+    r"oppo\s+reno|realme|vivo|motorola|smartphone|mobile\s+phones?|5g\s+phone)\b",
+    re.I,
+)
+_REVIEW_TITLE_STAR_PREFIX = re.compile(r"^\s*[\d.]+\s*out\s+of\s*5\s*stars\s*", re.I)
+
 
 class ScraperApiScrapingProvider:
     """https://docs.scraperapi.com/making-requests/http-get-requests-get"""
@@ -90,6 +106,8 @@ class ScraperApiScrapingProvider:
         target_url: str,
         amazon_domain: Optional[str] = None,
         raise_on_error: bool = False,
+        *,
+        force_render: bool = False,
     ) -> tuple[str, str, int]:
         """Fetch a page through ScraperAPI without raising on 4xx by default.
 
@@ -100,7 +118,7 @@ class ScraperApiScrapingProvider:
         # ScraperAPI: every API flag must appear *before* `url` in the query string, or routing can break (often 404).
         # See https://docs.scraperapi.com/synchronous-apis/using-the-api-endpoint
         query_pairs: list[tuple[str, str]] = [("api_key", self.api_key)]
-        if self.render:
+        if self.render or force_render:
             query_pairs.append(("render", "true"))
         country = self._country_for(amazon_domain)
         if country:
@@ -190,6 +208,17 @@ class ScraperApiScrapingProvider:
                 if isinstance(cand, list):
                     reviews_raw = cand
                     break
+            if not reviews_raw:
+                for key in ("product_reviews", "customer_reviews", "review_list", "top_reviews"):
+                    cand = data.get(key)
+                    if isinstance(cand, list):
+                        reviews_raw = cand
+                        break
+                    if isinstance(cand, dict):
+                        inner = cand.get("reviews") or cand.get("items") or cand.get("results")
+                        if isinstance(inner, list):
+                            reviews_raw = inner
+                            break
 
         out: list[NormalizedReview] = []
         for idx, item in enumerate(reviews_raw):
@@ -208,6 +237,9 @@ class ScraperApiScrapingProvider:
                     rating = None
 
             title = item.get("title") or item.get("review_title") or None
+            if title:
+                t2 = _REVIEW_TITLE_STAR_PREFIX.sub("", str(title)).strip()
+                title = t2 if t2 else None
             body = item.get("body") or item.get("review") or item.get("text") or ""
             if isinstance(body, list):
                 body = "\n".join(str(part) for part in body if part)
@@ -984,8 +1016,31 @@ class ScraperApiScrapingProvider:
             return a
         return None
 
+    def _discover_tile_hint(self, node) -> str:
+        for img in node.select("img[alt]"):
+            alt = (img.get("alt") or "").strip()
+            if len(alt) > 6 and not alt.lower().startswith("amazon"):
+                return alt[:320]
+        try:
+            txt = node.get_text(" ", strip=True)
+        except (AttributeError, TypeError):
+            return ""
+        return txt[:320] if txt else ""
+
+    @staticmethod
+    def _discover_should_skip_competitor_tile(primary_title: str, tile_hint: str) -> bool:
+        ph = (primary_title or "").strip()
+        hint = (tile_hint or "").strip()
+        if not _HANDSET_PRIMARY_HINT.search(ph):
+            return False
+        return bool(_ACCESSORY_TILE_HINT.search(hint))
+
     async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
-        """Collect related ASINs from PDP widgets (similar / compare / sponsored carousels)."""
+        """Collect related ASINs from PDP widgets.
+
+        Prefer compare/similar carousels; de-prioritize FBT and sponsored blocks where chargers
+        and AppleCare often appear. When the PDP looks like a handset, drop accessory-like tiles.
+        """
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
 
@@ -995,53 +1050,68 @@ class ScraperApiScrapingProvider:
 
         soup = BeautifulSoup(html, "html.parser")
         primary = asin.upper()
-        out: list[str] = []
+        primary_title = self._extract_title(soup)
+        candidates: list[str] = []
         seen: set[str] = {primary}
+        gather_cap = max(limit * 4, limit + 8)
 
-        priority_selectors = (
-            "[data-a-carousel-options]",
+        def try_add(cand: str, hint: str) -> None:
+            if cand in seen or len(candidates) >= gather_cap:
+                return
+            if self._discover_should_skip_competitor_tile(primary_title, hint):
+                return
+            seen.add(cand)
+            candidates.append(cand)
+
+        def harvest_selectors(selectors: tuple[str, ...]) -> None:
+            for sel in selectors:
+                for root in soup.select(sel):
+                    for node in root.select("[data-asin]"):
+                        cand = self._asin_from_data_asin_node(node)
+                        if not cand:
+                            continue
+                        try_add(cand, self._discover_tile_hint(node))
+                        if len(candidates) >= gather_cap:
+                            return
+
+        strict_selectors = (
             "#product-comparison_feature_div",
-            "#sims-fbt",
-            "#sp_detail",
-            "#sponsoredProducts_feature_div",
             '[cel_widget_id*="comparator"]',
             '[cel_widget_id*="similar"]',
             "#sims-consolidated-1_feature_div",
             "#sims-constraint-carousel_feature_div",
             "#sp_detail_thematic-asin_feature_div",
         )
+        loose_selectors = ("[data-a-carousel-options]",)
+        low_trust_selectors = ("#sims-fbt", "#sp_detail", "#sponsoredProducts_feature_div")
 
-        def harvest(root) -> None:
-            for node in root.select("[data-asin]"):
+        harvest_selectors(strict_selectors)
+        if len(candidates) < limit:
+            harvest_selectors(loose_selectors)
+        if len(candidates) < limit:
+            harvest_selectors(low_trust_selectors)
+
+        if len(candidates) < limit:
+            for node in soup.select("[data-asin]"):
                 cand = self._asin_from_data_asin_node(node)
-                if cand and cand not in seen:
-                    seen.add(cand)
-                    out.append(cand)
-                    if len(out) >= limit:
-                        return
+                if not cand:
+                    continue
+                try_add(cand, self._discover_tile_hint(node))
+                if len(candidates) >= gather_cap:
+                    break
 
-        for sel in priority_selectors:
-            for root in soup.select(sel):
-                harvest(root)
-                if len(out) >= limit:
-                    return out[:limit]
+        if len(candidates) < limit:
+            for a in soup.select('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'):
+                href = (a.get("href") or "") + ""
+                m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", href, flags=re.I)
+                if m:
+                    cand = m.group(1).upper()
+                    if cand.startswith("B") and len(cand) == 10:
+                        try_add(cand, "")
+                if len(candidates) >= gather_cap:
+                    break
 
-        harvest(soup)
-        if len(out) >= limit:
-            return out[:limit]
-
-        for a in soup.select('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'):
-            href = (a.get("href") or "") + ""
-            m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", href, flags=re.I)
-            if m:
-                cand = m.group(1).upper()
-                if cand not in seen and cand.startswith("B") and len(cand) == 10:
-                    seen.add(cand)
-                    out.append(cand)
-            if len(out) >= limit:
-                break
-
-        return out[:limit]
+        return candidates[:limit]
 
     async def fetch_best_seller_asins(self, bestsellers_page_url: str, amazon_domain: str, limit: int) -> list[str]:
         domain_hint = normalize_amazon_domain(amazon_domain)
@@ -1129,12 +1199,28 @@ class ScraperApiScrapingProvider:
                     except (TypeError, ValueError):
                         rating = None
 
-            title_el = blk.select_one(
-                '[data-hook="review-title"] span:last-of-type, '
-                'a[data-hook="review-title"] span, '
-                '[data-hook="review-title"]'
-            )
-            rtitle = title_el.get_text(strip=True) if title_el else None
+            parts: list[str] = []
+            for sp in blk.select('[data-hook="review-title"] span, a[data-hook="review-title"] span'):
+                t = sp.get_text(strip=True)
+                if not t:
+                    continue
+                if re.match(r"^\s*[\d.]+\s*out\s+of\s*5\s*stars\s*$", t, flags=re.I):
+                    continue
+                if re.match(r"^\s*[\d.]+\s*/\s*5\s*$", t):
+                    continue
+                parts.append(t)
+            rtitle = " ".join(parts).strip() if parts else None
+            if not rtitle:
+                title_el = blk.select_one(
+                    '[data-hook="review-title"] span:last-of-type, '
+                    'a[data-hook="review-title"] span, '
+                    '[data-hook="review-title"]'
+                )
+                rtitle = title_el.get_text(strip=True) if title_el else None
+            if rtitle:
+                rtitle = _REVIEW_TITLE_STAR_PREFIX.sub("", rtitle).strip() or None
+            if rtitle and len(rtitle) > 512:
+                rtitle = rtitle[:512]
 
             body_el = blk.select_one(
                 '[data-hook="review-body"] span, '
@@ -1205,6 +1291,8 @@ class ScraperApiScrapingProvider:
         # variant succeeds more often on .in than the bare "?pageNumber" form.
         path = f"/product-reviews/{upper_asin}/ref=cm_cr_arp_d_paging_btm_next_{page}"
         target = urlunsplit((parts.scheme, parts.netloc, path, query, ""))
+        alt_path = f"/product-reviews/{upper_asin}"
+        alt_target = urlunsplit((parts.scheme, parts.netloc, alt_path, query, ""))
 
         canonical, html, status = await self._fetch_html_lenient(target, amazon_domain)
 
@@ -1262,6 +1350,41 @@ class ScraperApiScrapingProvider:
                     canonical = pdp_canonical
                 elif self.save_html_on_empty:
                     self._dump_debug_html("pdp_reviews", upper_asin, pdp_html, "pdp_zero_reviews")
+
+        if not reviews and page == 1 and alt_target != target:
+            ac2, h2, st2 = await self._fetch_html_lenient(alt_target, amazon_domain)
+            if st2 < 400 and h2:
+                soup2 = BeautifulSoup(h2, "html.parser")
+                r2 = self._reviews_from_page(upper_asin, soup2, page)
+                if r2:
+                    reviews = r2
+                    canonical = ac2
+                    strategy = "product_reviews_html_alt"
+                    next_anchor2 = soup2.select_one('li.a-last:not(.a-disabled) a')
+                    next_token = str(page + 1) if next_anchor2 else None
+                    if next_token is None and len(r2) >= 8:
+                        next_token = str(page + 1)
+                elif self.save_html_on_empty:
+                    self._dump_debug_html("reviews_alt", f"{upper_asin}_p{page}", h2, "zero_reviews")
+
+        store_host = normalize_amazon_domain(amazon_domain).lower()
+        if not reviews and page == 1 and not self.render and store_host.endswith("amazon.in"):
+            for attempt_url, tag in ((target, "render_ref"), (alt_target, "render_alt")):
+                if reviews:
+                    break
+                rc, hr, sr = await self._fetch_html_lenient(attempt_url, amazon_domain, force_render=True)
+                if sr < 400 and hr:
+                    soup_r = BeautifulSoup(hr, "html.parser")
+                    rr = self._reviews_from_page(upper_asin, soup_r, page)
+                    if rr:
+                        reviews = rr
+                        canonical = rc
+                        strategy = f"product_reviews_html_{tag}"
+                        na_r = soup_r.select_one('li.a-last:not(.a-disabled) a')
+                        next_token = str(page + 1) if na_r else None
+                        if next_token is None and len(rr) >= 8:
+                            next_token = str(page + 1)
+                        break
 
         if reviews and strategy:
             logger.info(

@@ -88,10 +88,7 @@ async def _ingest_reviews_market(provider, amazon_domain: str, job_id: uuid.UUID
             if session.exec(stmt).first():
                 continue
 
-            body = rv.body or ""
-            has_img = bool(getattr(rv, "has_customer_images", False))
-            if has_img:
-                body = f"[Customer photos in review] {body}".strip()
+            body = (rv.body or "").strip()
 
             session.add(
                 Review(
@@ -103,7 +100,7 @@ async def _ingest_reviews_market(provider, amazon_domain: str, job_id: uuid.UUID
                     body=body[:8192],
                     review_date=rv.review_date,
                     is_verified_purchase=rv.is_verified_purchase,
-                    has_customer_images=has_img,
+                    has_customer_images=bool(getattr(rv, "has_customer_images", False)),
                 )
             )
             collected += 1
@@ -140,7 +137,7 @@ async def _ingest_reviews_competitive(
         rows, next_token = await provider.fetch_reviews_page(asin, amazon_domain, str(page))
         if not rows:
             empty_pages += 1
-            if empty_pages >= 2:
+            if empty_pages >= 4:
                 break
             page += 1
             continue
@@ -198,10 +195,8 @@ async def _ingest_reviews_competitive(
         if session.exec(stmt).first():
             continue
 
-        body = rv.body or ""
+        body = (rv.body or "").strip()
         has_img = bool(getattr(rv, "has_customer_images", False))
-        if has_img:
-            body = f"[Customer photos in review] {body}".strip()
 
         session.add(
             Review(
@@ -245,7 +240,11 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
                 "try SCRAPERAPI_RENDER=true, or set REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false to include all text reviews."
             )
         elif job.flow == JobFlow.competitive:
-            hint += " Competitive jobs keep up to ten recent reviews per ASIN (image-heavy reviews ranked first when available)."
+            hint += (
+                " Competitive analyses keep up to ten recent reviews per ASIN. "
+                "On amazon.in, review HTML is often client-rendered: set SCRAPERAPI_RENDER=true (or rely on the "
+                "server’s one-shot render fallback when structured reviews are empty) and ensure AMAZON_DOMAIN matches the storefront."
+            )
         stub = Summary(
             job_id=job.id,
             asin=asin,
