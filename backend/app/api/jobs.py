@@ -82,6 +82,9 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
             canonical_url=row.canonical_url,
             estimated_monthly_units=row.estimated_monthly_units,
             estimated_monthly_revenue=row.estimated_monthly_revenue,
+            previous_month_units=row.previous_month_units,
+            revenue_basis=row.revenue_basis or "unknown",
+            unit_price_inr=row.unit_price_inr,
         )
         for row in listings_rows
     ]

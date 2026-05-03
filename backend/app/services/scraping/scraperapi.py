@@ -81,6 +81,20 @@ class ScraperApiScrapingProvider:
             logger.warning("Could not save debug HTML: %s", exc)
 
     async def _fetch_html(self, target_url: str, amazon_domain: Optional[str] = None) -> tuple[str, str]:
+        canonical, body, _status = await self._fetch_html_lenient(target_url, amazon_domain, raise_on_error=True)
+        return canonical, body
+
+    async def _fetch_html_lenient(
+        self,
+        target_url: str,
+        amazon_domain: Optional[str] = None,
+        raise_on_error: bool = False,
+    ) -> tuple[str, str, int]:
+        """Fetch a page through ScraperAPI without raising on 4xx by default.
+
+        Returns (canonical_target_url, decoded_body, http_status). Callers can branch on
+        ``status`` to fall back to alternate review strategies when Amazon 404s.
+        """
         canonical = self._canonical_target_url(target_url)
         # ScraperAPI: every API flag must appear *before* `url` in the query string, or routing can break (often 404).
         # See https://docs.scraperapi.com/synchronous-apis/using-the-api-endpoint
@@ -95,7 +109,8 @@ class ScraperApiScrapingProvider:
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
             rsp = await client.get(self.BASE, params=query_pairs)
 
-        rsp.raise_for_status()
+        if raise_on_error:
+            rsp.raise_for_status()
 
         ctype = rsp.headers.get("content-type") or ""
 
@@ -119,7 +134,122 @@ class ScraperApiScrapingProvider:
             except json.JSONDecodeError:
                 pass
 
-        return canonical, html
+        return canonical, html, rsp.status_code
+
+    async def _fetch_structured_reviews(
+        self,
+        asin: str,
+        amazon_domain: str,
+        page: int,
+    ) -> tuple[list[NormalizedReview], Optional[str], int]:
+        """Use ScraperAPI's structured Amazon Reviews endpoint as a fallback.
+
+        Docs: https://docs.scraperapi.com/structured-data-collection-method/amazon/amazon-review
+        Returns (reviews, next_token, status_code). Status 0 means the call itself failed.
+        """
+        domain = normalize_amazon_domain(amazon_domain)
+        # tld is the part *after* "amazon." (e.g. "in", "co.uk", "com").
+        tld = domain[len("amazon."):] if domain.startswith("amazon.") else "com"
+        country = self._country_for(amazon_domain) or "us"
+
+        params: list[tuple[str, str]] = [
+            ("api_key", self.api_key),
+            ("asin", asin.upper()),
+            ("tld", tld),
+            ("country", country),
+            ("page", str(page)),
+        ]
+        if self.render:
+            params.append(("render", "true"))
+
+        url = "https://api.scraperapi.com/structured/amazon/review"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+                rsp = await client.get(url, params=params)
+        except httpx.HTTPError as exc:
+            logger.warning("ScraperAPI structured reviews call failed for %s p%s: %s", asin, page, exc)
+            return [], None, 0
+
+        if rsp.status_code >= 400:
+            logger.info(
+                "ScraperAPI structured reviews returned %s for %s p%s", rsp.status_code, asin, page,
+            )
+            return [], None, rsp.status_code
+
+        try:
+            data = rsp.json()
+        except ValueError:
+            logger.info("ScraperAPI structured reviews returned non-JSON for %s p%s", asin, page)
+            return [], None, rsp.status_code
+
+        reviews_raw: list[dict] = []
+        if isinstance(data, dict):
+            for key in ("reviews", "results", "data"):
+                cand = data.get(key)
+                if isinstance(cand, list):
+                    reviews_raw = cand
+                    break
+
+        out: list[NormalizedReview] = []
+        for idx, item in enumerate(reviews_raw):
+            if not isinstance(item, dict):
+                continue
+            ext_id = (
+                str(item.get("id") or item.get("review_id") or item.get("reviewId") or "").strip()
+                or f"{asin.upper()}-struct-{page}-{idx}"
+            )
+            rating: Optional[int] = None
+            raw_rating = item.get("rating") or item.get("stars")
+            if raw_rating is not None:
+                try:
+                    rating = max(1, min(5, int(round(float(raw_rating)))))
+                except (TypeError, ValueError):
+                    rating = None
+
+            title = item.get("title") or item.get("review_title") or None
+            body = item.get("body") or item.get("review") or item.get("text") or ""
+            if isinstance(body, list):
+                body = "\n".join(str(part) for part in body if part)
+            body = str(body)[:8192]
+
+            date = item.get("date") or item.get("review_date") or item.get("posted_on")
+            date_str = str(date)[:32] if date else None
+
+            verified_raw = item.get("verified") or item.get("verified_purchase") or item.get("is_verified")
+            if isinstance(verified_raw, str):
+                vp = verified_raw.strip().lower() in ("true", "yes", "1", "verified")
+            else:
+                vp = bool(verified_raw)
+
+            images = item.get("images") or item.get("review_images") or item.get("photos")
+            has_img = bool(images) if not isinstance(images, str) else bool(images.strip())
+
+            if body.strip() or rating is not None or title:
+                out.append(
+                    NormalizedReview(
+                        external_id=ext_id,
+                        rating=rating,
+                        title=str(title)[:512] if title else None,
+                        body=body,
+                        review_date=date_str,
+                        is_verified_purchase=vp,
+                        has_customer_images=has_img,
+                    )
+                )
+
+        # Determine pagination heuristically: if we got >= 8 rows assume there's another page.
+        next_token: Optional[str] = None
+        if isinstance(data, dict):
+            tp = data.get("total_pages") or data.get("totalPages")
+            try:
+                if tp and int(tp) > page:
+                    next_token = str(page + 1)
+            except (TypeError, ValueError):
+                pass
+        if next_token is None and len(out) >= 8:
+            next_token = str(page + 1)
+
+        return out, next_token, rsp.status_code
 
     def _looks_like_blocked(self, html: str) -> bool:
         low = html[:8000].lower()
@@ -331,6 +461,64 @@ class ScraperApiScrapingProvider:
                     continue
         return None
 
+    # Matches "10K+ bought in past month", "1,000+ bought in past month", "1.5M bought in past month".
+    _BOUGHT_RE = re.compile(
+        r"([\d][\d,\.]*)\s*([KkMm])?\s*\+?\s*bought\s+in\s+past\s+month",
+        re.I,
+    )
+
+    @classmethod
+    def _extract_bought_past_month(cls, soup: BeautifulSoup) -> tuple[Optional[int], Optional[str]]:
+        """Parse the "X bought in past month" social-proof badge from a PDP.
+
+        Returns (units_lower_bound, raw_label). When the badge says "10K+", we treat
+        10_000 as a lower-bound estimate. None when the badge isn't shown.
+        """
+        candidates: list[str] = []
+        for sel in (
+            "#social-proofing-faceout-title-tk_bought",
+            "#socialProofingAsinFaceout_feature_div",
+            "#socialProofingAsinFaceout",
+            '[data-feature-name="socialProofingAsinFaceout"]',
+            "#acrCustomerReviewText + span",
+            "div.social-proofing-faceout",
+        ):
+            for el in soup.select(sel):
+                txt = el.get_text(" ", strip=True)
+                if txt:
+                    candidates.append(txt)
+
+        # Fallback: scan the full document (cheap, regex is anchored to the badge phrase).
+        if not candidates:
+            doc_text = soup.get_text(" ", strip=True)
+            if "bought in past month" in doc_text.lower():
+                candidates.append(doc_text)
+
+        for txt in candidates:
+            m = cls._BOUGHT_RE.search(txt)
+            if not m:
+                continue
+            number_raw = m.group(1).replace(",", "").strip()
+            suffix = (m.group(2) or "").lower()
+            try:
+                base = float(number_raw)
+            except ValueError:
+                continue
+            multiplier = 1
+            if suffix == "k":
+                multiplier = 1_000
+            elif suffix == "m":
+                multiplier = 1_000_000
+            units = int(base * multiplier)
+            if units <= 0:
+                continue
+            label_match = re.search(
+                r"[\d][\d,\.]*\s*[KkMm]?\+?\s*bought\s+in\s+past\s+month", txt, re.I,
+            )
+            label = label_match.group(0).strip() if label_match else None
+            return units, label
+        return None, None
+
     def _listing_from_soup(self, asin: str, soup: BeautifulSoup, canonical: str, raw_html_len: int) -> NormalizedListing:
         html_blob = soup.decode()
 
@@ -342,6 +530,7 @@ class ScraperApiScrapingProvider:
 
         price, currency = self._extract_price_currency(soup)
         bsr_rank, bsr_cat = self._extract_bsr(soup, html_blob[:200_000])
+        prev_units, prev_label = self._extract_bought_past_month(soup)
 
         thin_parse = (not title_raw.strip()) or (price is None and bsr_rank is None)
 
@@ -365,6 +554,8 @@ class ScraperApiScrapingProvider:
             avg_rating=avg,
             review_count=review_count,
             canonical_url=canonical,
+            previous_month_units=prev_units,
+            previous_month_label=prev_label,
             raw={
                 "provider": "scraperapi",
                 "html_chars": raw_html_len,
@@ -373,6 +564,7 @@ class ScraperApiScrapingProvider:
                 "render": self.render,
                 "country_code": self.country_code,
                 "warnings": warnings,
+                "previous_month_label": prev_label,
             },
         )
 
@@ -616,30 +808,87 @@ class ScraperApiScrapingProvider:
         amazon_domain: str,
         page_token: Optional[str],
     ) -> tuple[list[NormalizedReview], Optional[str]]:
+        """Try several strategies in order; return first non-empty page.
+
+        1. Canonical product-reviews paging URL (preferred when Amazon serves it).
+        2. ScraperAPI structured Amazon reviews endpoint (JSON, more reliable on .in).
+        3. Fallback to the PDP and parse the embedded top-reviews block.
+
+        Repeated 4xx responses are swallowed (job continues, just with fewer reviews).
+        """
         site = amazon_site_origin(amazon_domain)
-
         page = int(page_token) if page_token and str(page_token).isdigit() else 1
+        upper_asin = asin.upper()
 
-        path = f"/product-reviews/{asin.upper()}"
+        parts = urlsplit(site)
         query = urlencode(
             {"ie": "UTF8", "reviewerType": "all_reviews", "sortBy": "recent", "pageNumber": str(page)},
         )
-
-        parts = urlsplit(site)
+        # Amazon's canonical paginated URL — the "/ref=cm_cr_arp_d_paging_btm_next_<N>"
+        # variant succeeds more often on .in than the bare "?pageNumber" form.
+        path = f"/product-reviews/{upper_asin}/ref=cm_cr_arp_d_paging_btm_next_{page}"
         target = urlunsplit((parts.scheme, parts.netloc, path, query, ""))
 
-        _canonical, html = await self._fetch_html(target, amazon_domain)
-        soup = BeautifulSoup(html, "html.parser")
+        canonical, html, status = await self._fetch_html_lenient(target, amazon_domain)
 
-        reviews = self._reviews_from_page(asin.upper(), soup, page)
+        if status >= 400:
+            logger.info(
+                "Reviews page %s for %s returned HTTP %s; trying structured fallback.",
+                page,
+                upper_asin,
+                status,
+            )
+            html = ""
 
-        if not reviews and self.save_html_on_empty:
-            self._dump_debug_html("reviews", f"{asin.upper()}_p{page}", html, "zero_reviews")
+        reviews: list[NormalizedReview] = []
+        next_token: Optional[str] = None
+        strategy = ""
 
-        next_anchor = soup.select_one('li.a-last:not(.a-disabled) a')
-        next_token = str(page + 1) if (next_anchor and reviews) else None
+        if html:
+            soup = BeautifulSoup(html, "html.parser")
+            reviews = self._reviews_from_page(upper_asin, soup, page)
+            if reviews:
+                strategy = "product_reviews_html"
+                next_anchor = soup.select_one('li.a-last:not(.a-disabled) a')
+                next_token = str(page + 1) if next_anchor else None
+                if next_token is None and len(reviews) >= 8:
+                    next_token = str(page + 1)
+            elif self.save_html_on_empty:
+                self._dump_debug_html("reviews", f"{upper_asin}_p{page}", html, "zero_reviews")
 
-        if reviews and next_token is None and len(reviews) >= 8:
-            next_token = str(page + 1)
+        if not reviews:
+            struct_reviews, struct_next, struct_status = await self._fetch_structured_reviews(
+                upper_asin, amazon_domain, page,
+            )
+            if struct_reviews:
+                reviews = struct_reviews
+                next_token = struct_next
+                strategy = "structured_endpoint"
+            else:
+                logger.info(
+                    "Structured reviews fallback empty for %s p%s (status=%s).",
+                    upper_asin,
+                    page,
+                    struct_status,
+                )
+
+        if not reviews and page == 1:
+            pdp_target = f"{site}/dp/{upper_asin}"
+            pdp_canonical, pdp_html, pdp_status = await self._fetch_html_lenient(pdp_target, amazon_domain)
+            if pdp_status < 400 and pdp_html:
+                soup = BeautifulSoup(pdp_html, "html.parser")
+                pdp_reviews = self._reviews_from_page(upper_asin, soup, page)
+                if pdp_reviews:
+                    reviews = pdp_reviews
+                    next_token = None  # PDP only embeds a small sample.
+                    strategy = "pdp_embedded"
+                    canonical = pdp_canonical
+                elif self.save_html_on_empty:
+                    self._dump_debug_html("pdp_reviews", upper_asin, pdp_html, "pdp_zero_reviews")
+
+        if reviews and strategy:
+            logger.info(
+                "Fetched %d reviews for %s p%s via %s.", len(reviews), upper_asin, page, strategy,
+            )
 
         return reviews, next_token

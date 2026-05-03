@@ -14,6 +14,11 @@ class NormalizedListing:
     review_count: Optional[int]
     canonical_url: Optional[str]
     raw: dict[str, Any]
+    # Number of units sold last month, taken from the PDP "X bought in past month" badge
+    # (lower bound when the badge says "X+"). None when Amazon doesn't surface it.
+    previous_month_units: Optional[int] = None
+    # Raw badge text we parsed, useful for showing the source in the UI.
+    previous_month_label: Optional[str] = None
 
 
 @dataclass

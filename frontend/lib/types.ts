@@ -2,6 +2,8 @@ export type JobFlow = "market" | "competitive";
 
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
+export type RevenueBasis = "bought_past_month" | "bsr_heuristic" | "unknown";
+
 export interface ListingOut {
   asin: string;
   title: string;
@@ -13,7 +15,10 @@ export interface ListingOut {
   review_count: number | null;
   canonical_url: string | null;
   estimated_monthly_units: number | null;
-  estimated_monthly_revenue: number | null;
+  estimated_monthly_revenue: number | null; // Always INR
+  previous_month_units: number | null;
+  revenue_basis: RevenueBasis;
+  unit_price_inr: number | null;
 }
 
 export interface SummaryOut {

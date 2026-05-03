@@ -49,7 +49,10 @@ class ListingOut(BaseModel):
     review_count: Optional[int]
     canonical_url: Optional[str]
     estimated_monthly_units: Optional[float]
-    estimated_monthly_revenue: Optional[float]
+    estimated_monthly_revenue: Optional[float]  # Always INR
+    previous_month_units: Optional[int] = None
+    revenue_basis: str = "unknown"
+    unit_price_inr: Optional[float] = None
 
 
 class SummaryOut(BaseModel):

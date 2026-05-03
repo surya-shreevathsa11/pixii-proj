@@ -57,7 +57,14 @@ class Listing(SQLModel, table=True):
     review_count: Optional[int] = Field(default=None)
     canonical_url: Optional[str] = Field(default=None, max_length=2048)
     estimated_monthly_units: Optional[float] = Field(default=None)
+    # Always denominated in INR; see services/revenue.py.
     estimated_monthly_revenue: Optional[float] = Field(default=None)
+    # Lower-bound monthly sales pulled from Amazon's "X bought in past month" badge.
+    previous_month_units: Optional[int] = Field(default=None)
+    # "bought_past_month" | "bsr_heuristic" | "unknown"
+    revenue_basis: str = Field(default="unknown", max_length=32)
+    # Listing.price normalized to INR using the FX rate captured at job time.
+    unit_price_inr: Optional[float] = Field(default=None)
 
     captured_at: datetime = Field(default_factory=utc_now)
     raw_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))

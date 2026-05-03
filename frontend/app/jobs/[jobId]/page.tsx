@@ -9,11 +9,43 @@ import { Disclaimer } from "@/components/Disclaimer";
 import { fetchJob } from "@/lib/api";
 import type { JobDetailResponse } from "@/lib/types";
 
-const currencyFmt = new Intl.NumberFormat(undefined, {
+const inrFmt = new Intl.NumberFormat("en-IN", {
   style: "currency",
-  currency: "USD",
+  currency: "INR",
+  currencyDisplay: "narrowSymbol",
   maximumFractionDigits: 0,
 });
+
+const inrPriceFmt = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  currencyDisplay: "narrowSymbol",
+  maximumFractionDigits: 2,
+});
+
+const numberFmt = new Intl.NumberFormat("en-IN");
+
+function basisChipClass(basis: string) {
+  switch (basis) {
+    case "bought_past_month":
+      return "bg-emerald-100 text-emerald-900";
+    case "bsr_heuristic":
+      return "bg-amber-100 text-amber-900";
+    default:
+      return "bg-zinc-100 text-zinc-700";
+  }
+}
+
+function basisChipLabel(basis: string) {
+  switch (basis) {
+    case "bought_past_month":
+      return "bought in past month";
+    case "bsr_heuristic":
+      return "BSR heuristic";
+    default:
+      return "no signal";
+  }
+}
 
 function chipVariant(status: JobDetailResponse["status"]) {
   switch (status) {
@@ -227,7 +259,7 @@ export default function JobInsightPage() {
           <Stat label="Live phase" value={job.phase || "—"} />
           <Stat label="Listings synthesized" value={String(job.listings.length)} />
           <Stat label="Captured reviews" value={String(job.reviews_count_total)} />
-          <Stat label="Rolling rev / mo (sum estimates)" value={currencyFmt.format(totalEstimated)} />
+          <Stat label="Rolling rev / mo (sum estimates, INR)" value={inrFmt.format(totalEstimated)} />
         </section>
       ) : null}
 
@@ -256,7 +288,10 @@ export default function JobInsightPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-xl font-semibold">Estimated monthly revenue leaderboard</h2>
-              <p className="text-sm text-zinc-500">Sorted descending by illustrative revenue heuristic.</p>
+              <p className="text-sm text-zinc-500">
+                Previous-month sales x unit price (INR). Falls back to a BSR-rank heuristic when Amazon hides the
+                "bought in past month" badge.
+              </p>
               {job.flow === "competitive" ? (
                 <p className="mt-2 text-xs text-zinc-500">
                   Competitive jobs also populate{" "}
@@ -275,45 +310,78 @@ export default function JobInsightPage() {
                   <th className="px-4 py-3 pr-4">#</th>
                   <th className="max-w-lg px-0 py-3 pr-4">ASIN / product</th>
                   <th className="px-0 py-3 pr-4 text-right">BSR</th>
+                  <th className="px-0 py-3 pr-4 text-right">Prev-month units</th>
                   <th className="px-0 py-3 pr-4 text-right">Price</th>
                   <th className="px-4 py-3 text-right">Est. revenue / mo</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {job.listings.map((listing, idx) => (
-                  <tr key={listing.asin} className="align-top transition hover:bg-zinc-50/80">
-                    <td className="px-4 py-3 pr-4 text-xs font-mono text-zinc-400">{idx + 1}</td>
-                    <td className="max-w-lg py-3 pr-4 text-zinc-700">
-                      <div className="font-mono text-xs font-semibold tracking-wide text-zinc-900">{listing.asin}</div>
-                      <div className="mt-1.5">
-                        {listing.canonical_url ? (
-                          <a
-                            href={listing.canonical_url}
-                            className="text-sm font-medium text-blue-700 underline decoration-blue-400 decoration-2 underline-offset-4 hover:text-blue-600"
-                          >
-                            {listing.title.slice(0, 140)}
-                            {listing.title.length > 140 ? "…" : ""}
-                          </a>
+                {job.listings.map((listing, idx) => {
+                  const priceInr = listing.unit_price_inr ?? (listing.currency === "INR" ? listing.price : null);
+                  const showOriginalPrice =
+                    listing.price != null && listing.currency && listing.currency.toUpperCase() !== "INR";
+                  return (
+                    <tr key={listing.asin} className="align-top transition hover:bg-zinc-50/80">
+                      <td className="px-4 py-3 pr-4 text-xs font-mono text-zinc-400">{idx + 1}</td>
+                      <td className="max-w-lg py-3 pr-4 text-zinc-700">
+                        <div className="font-mono text-xs font-semibold tracking-wide text-zinc-900">{listing.asin}</div>
+                        <div className="mt-1.5">
+                          {listing.canonical_url ? (
+                            <a
+                              href={listing.canonical_url}
+                              className="text-sm font-medium text-blue-700 underline decoration-blue-400 decoration-2 underline-offset-4 hover:text-blue-600"
+                            >
+                              {listing.title.slice(0, 140)}
+                              {listing.title.length > 140 ? "…" : ""}
+                            </a>
+                          ) : (
+                            <span className="text-sm font-medium text-zinc-900">
+                              {listing.title.slice(0, 140)}
+                              {listing.title.length > 140 ? "…" : ""}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-2 text-[11px] uppercase tracking-[0.2em] text-zinc-400">
+                          {listing.bsr_category ?? "Category unknown"}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-right text-zinc-600">{listing.bsr_rank ?? "—"}</td>
+                      <td className="py-3 pr-4 text-right text-zinc-600">
+                        {listing.previous_month_units != null
+                          ? numberFmt.format(listing.previous_month_units)
+                          : "—"}
+                      </td>
+                      <td className="py-3 pr-4 text-right text-zinc-600">
+                        {priceInr != null ? (
+                          <div className="space-y-0.5">
+                            <div>{inrPriceFmt.format(priceInr)}</div>
+                            {showOriginalPrice && listing.price != null ? (
+                              <div className="text-[10px] uppercase tracking-wide text-zinc-400">
+                                {listing.currency} {listing.price.toFixed(2)}
+                              </div>
+                            ) : null}
+                          </div>
                         ) : (
-                          <span className="text-sm font-medium text-zinc-900">
-                            {listing.title.slice(0, 140)}
-                            {listing.title.length > 140 ? "…" : ""}
-                          </span>
+                          "—"
                         )}
-                      </div>
-                      <div className="mt-2 text-[11px] uppercase tracking-[0.2em] text-zinc-400">
-                        {listing.bsr_category ?? "Category unknown"}
-                      </div>
-                    </td>
-                    <td className="py-3 pr-4 text-right text-zinc-600">{listing.bsr_rank ?? "—"}</td>
-                    <td className="py-3 pr-4 text-right text-zinc-600">
-                      {listing.price != null ? `${listing.currency} ${listing.price.toFixed(2)}` : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold">
-                      {listing.estimated_monthly_revenue != null ? currencyFmt.format(listing.estimated_monthly_revenue) : "—"}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="font-semibold text-zinc-900">
+                          {listing.estimated_monthly_revenue != null
+                            ? inrFmt.format(listing.estimated_monthly_revenue)
+                            : "—"}
+                        </div>
+                        <span
+                          className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${basisChipClass(
+                            listing.revenue_basis,
+                          )}`}
+                        >
+                          {basisChipLabel(listing.revenue_basis)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

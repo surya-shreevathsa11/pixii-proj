@@ -11,7 +11,12 @@ from app.config import settings
 from app.database import engine
 from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
 from app.services.llm_review import batch_map_review_themes, format_review_batches, reduce_review_map
-from app.services.revenue import estimate_monthly_units_from_bsr, monthly_revenue_from_units
+from app.services.revenue import (
+    compute_revenue_inr,
+    convert_to_inr,
+    estimate_monthly_units_from_bsr,
+    get_usd_inr_rate,
+)
 from app.services.scraping.factory import get_scraping_provider
 from app.services.scraping.util import amazon_domain_from_url, normalize_amazon_domain
 
@@ -216,6 +221,8 @@ async def orchestrate(job_id: uuid.UUID) -> None:
             persist_job_touch(session, job)
 
             total = len(target_asins)
+            # Resolve the FX rate once per job so every listing's revenue uses the same INR conversion.
+            fx_rate = await get_usd_inr_rate()
 
             for idx, asin in enumerate(target_asins, start=1):
                 nl = await provider.fetch_listing(asin, amazon_domain)
@@ -238,12 +245,35 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 row.review_count = nl.review_count
                 row.canonical_url = nl.canonical_url
                 row.captured_at = utc_now()
-                row.raw_metadata = nl.raw if isinstance(nl.raw, dict) else {"payload": nl.raw}
+                row.previous_month_units = nl.previous_month_units
+                row.unit_price_inr = convert_to_inr(nl.price, nl.currency, fx_rate)
 
                 est = estimate_monthly_units_from_bsr(nl.bsr_rank, nl.bsr_category)
-                if est:
+                bsr_units = float(est.monthly_units) if est else None
+
+                revenue = compute_revenue_inr(
+                    previous_month_units=nl.previous_month_units,
+                    bsr_units=bsr_units,
+                    unit_price=nl.price,
+                    currency=nl.currency,
+                    usd_inr_rate=fx_rate,
+                )
+
+                if revenue.basis == "bought_past_month":
+                    row.estimated_monthly_units = float(nl.previous_month_units or 0)
+                elif est:
                     row.estimated_monthly_units = float(est.monthly_units)
-                    row.estimated_monthly_revenue = monthly_revenue_from_units(est.monthly_units, nl.price)
+                row.estimated_monthly_revenue = revenue.amount_inr
+                row.revenue_basis = revenue.basis
+
+                raw_payload = nl.raw if isinstance(nl.raw, dict) else {"payload": nl.raw}
+                raw_payload = dict(raw_payload)
+                raw_payload["revenue_basis"] = revenue.basis
+                raw_payload["revenue_rationale"] = revenue.rationale
+                raw_payload["fx_usd_inr"] = fx_rate
+                if nl.previous_month_label:
+                    raw_payload["previous_month_label"] = nl.previous_month_label
+                row.raw_metadata = raw_payload
 
                 session.add(row)
                 job.phase = f"Fetched listing ({idx}/{total or 1}): {asin}"
@@ -253,8 +283,8 @@ async def orchestrate(job_id: uuid.UUID) -> None:
 
             listing_total_rev = sum((l.estimated_monthly_revenue or 0) for l in refreshed)
             extrapolation = (
-                "Top-visible slice extrapolation assumption: multiplying the summed sampled revenue ×3 hints at "
-                f"roughly USD {listing_total_rev * 3:,.2f}/month for illustrative planning only."
+                "Top-visible slice extrapolation assumption: multiplying the summed sampled revenue x3 hints at "
+                f"roughly INR {listing_total_rev * 3:,.0f}/month for illustrative planning only."
                 if refreshed
                 else ""
             )

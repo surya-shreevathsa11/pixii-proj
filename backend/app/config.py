@@ -36,5 +36,11 @@ class Settings(BaseSettings):
 
     keepa_api_key: str = ""
 
+    # Revenue display normalization. Backend always reports estimated revenue in INR;
+    # the env rate is used as a static fallback when live FX endpoints are unreachable.
+    display_currency: str = "INR"
+    usd_to_inr_rate: float = 83.0
+    fx_cache_ttl_seconds: int = 21600
+
 
 settings = Settings()

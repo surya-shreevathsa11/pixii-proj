@@ -11,6 +11,8 @@ def _pseudo(asin: str, salt: bytes) -> int:
 class MockScrapingProvider:
     async def fetch_listing(self, asin: str, amazon_domain: str) -> NormalizedListing:
         r = max(50, (_pseudo(asin, b"bsr") % 4900) + 100)
+        prev_units = (_pseudo(asin, b"bought") % 50) * 100  # 0, 100, 200 ... 4900
+        prev_units = prev_units if prev_units >= 500 else None
         return NormalizedListing(
             asin=asin.upper(),
             title=f"Demo product ({asin.upper()})",
@@ -21,7 +23,9 @@ class MockScrapingProvider:
             avg_rating=3.9 + (_pseudo(asin, b"star") % 110) / 100,
             review_count=int(120 + (_pseudo(asin, b"rv") % 9000)),
             canonical_url=f"https://www.{amazon_domain}/dp/{asin.upper()}",
-            raw={"demo": True, "asin": asin.upper()},
+            previous_month_units=prev_units,
+            previous_month_label=f"{prev_units}+ bought in past month" if prev_units else None,
+            raw={"demo": True, "asin": asin.upper(), "previous_month_label": f"{prev_units}+ bought in past month" if prev_units else None},
         )
 
     async def fetch_best_seller_asins(self, bestsellers_page_url: str, amazon_domain: str, limit: int) -> list[str]:

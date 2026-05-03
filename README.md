@@ -43,6 +43,24 @@ ALTER TABLE job ADD COLUMN auto_discover_competitors BOOLEAN NOT NULL DEFAULT fa
 
 SQLite example: `ALTER TABLE job ADD COLUMN auto_discover_competitors BOOLEAN DEFAULT 0;`
 
+If you also have a `listing` table from an older install, add the revenue/INR columns:
+
+```sql
+ALTER TABLE listing ADD COLUMN previous_month_units INTEGER;
+ALTER TABLE listing ADD COLUMN revenue_basis VARCHAR(32) NOT NULL DEFAULT 'unknown';
+ALTER TABLE listing ADD COLUMN unit_price_inr DOUBLE PRECISION;
+```
+
+SQLite variant:
+
+```sql
+ALTER TABLE listing ADD COLUMN previous_month_units INTEGER;
+ALTER TABLE listing ADD COLUMN revenue_basis TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE listing ADD COLUMN unit_price_inr REAL;
+```
+
+Revenue is always stored and displayed in INR. To override the static USD->INR fallback when both live FX endpoints fail, set `USD_TO_INR_RATE=83` (or similar) in `backend/.env`.
+
 Run the API from the **`backend`** directory (so `.env` is picked up):
 
 ```bash
