@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { AppPageHeader } from "@/components/AppPageHeader";
+import { RecentAnalyses } from "@/components/RecentAnalyses";
 import { Disclaimer } from "@/components/Disclaimer";
 import { fetchJob } from "@/lib/api";
 import type { JobDetailResponse } from "@/lib/types";
@@ -192,6 +193,8 @@ export default function JobInsightPage() {
           { label: `Analysis ${jobIdShort}` },
         ]}
       />
+
+      <RecentAnalyses />
 
       <header className="flex flex-wrap items-start justify-between gap-4 pb-2">
         <div className="space-y-3">

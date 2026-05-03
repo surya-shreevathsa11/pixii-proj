@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { RecentAnalyses } from "@/components/RecentAnalyses";
 import { Disclaimer } from "@/components/Disclaimer";
 
 export default function HomePage() {
@@ -14,6 +15,8 @@ export default function HomePage() {
       </header>
 
       <Disclaimer />
+
+      <RecentAnalyses />
 
       <section className="grid gap-4 md:grid-cols-2">
         <FlowCard

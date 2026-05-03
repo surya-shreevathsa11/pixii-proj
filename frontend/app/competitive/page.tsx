@@ -4,8 +4,10 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 
 import { AppPageHeader } from "@/components/AppPageHeader";
+import { RecentAnalyses } from "@/components/RecentAnalyses";
 import { Disclaimer } from "@/components/Disclaimer";
 import { postCompetitiveJob } from "@/lib/api";
+import { pushAnalysisHistoryEntry } from "@/lib/analysisHistory";
 
 export default function CompetitiveWorkspace() {
   const router = useRouter();
@@ -31,10 +33,17 @@ export default function CompetitiveWorkspace() {
     setError(null);
     setBusy(true);
     try {
+      const productUrl = mine.trim();
       const rsp = await postCompetitiveJob({
-        product_url: mine.trim(),
+        product_url: productUrl,
         competitor_urls: autoDiscover ? [] : parsedRivals,
         auto_discover_competitors: autoDiscover,
+      });
+      pushAnalysisHistoryEntry({
+        jobId: rsp.job_id,
+        flow: "competitive",
+        label: productUrl,
+        snapshot: { product_url: productUrl, auto_discover: autoDiscover },
       });
       router.push(`/jobs/${rsp.job_id}`);
     } catch (err) {
@@ -60,6 +69,8 @@ export default function CompetitiveWorkspace() {
       </header>
 
       <Disclaimer />
+
+      <RecentAnalyses />
 
       <form
         onSubmit={onSubmit}

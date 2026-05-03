@@ -4,8 +4,10 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { AppPageHeader } from "@/components/AppPageHeader";
+import { RecentAnalyses } from "@/components/RecentAnalyses";
 import { Disclaimer } from "@/components/Disclaimer";
 import { postMarketJob } from "@/lib/api";
+import { pushAnalysisHistoryEntry } from "@/lib/analysisHistory";
 
 export default function MarketWorkspace() {
   const router = useRouter();
@@ -19,6 +21,13 @@ export default function MarketWorkspace() {
     setBusy(true);
     try {
       const rsp = await postMarketJob(url);
+      const trimmed = url.trim();
+      pushAnalysisHistoryEntry({
+        jobId: rsp.job_id,
+        flow: "market",
+        label: trimmed,
+        snapshot: { bestsellers_url: trimmed },
+      });
       router.push(`/jobs/${rsp.job_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to start market analysis.");
@@ -41,6 +50,8 @@ export default function MarketWorkspace() {
       </header>
 
       <Disclaimer />
+
+      <RecentAnalyses />
 
       <form
         onSubmit={onSubmit}
