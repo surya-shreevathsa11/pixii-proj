@@ -522,37 +522,50 @@ export default function JobInsightPage() {
                     </span>
                   </summary>
                   <div className="space-y-4 pt-6 text-sm text-zinc-700">
+                    <article className="rounded-lg border border-blue-200/70 bg-blue-50/40 px-5 py-4 shadow-sm">
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-900">
+                        Key Purchase Criteria
+                      </h3>
+                      <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                        Why customers buy this product, synthesized by Gemini from the {asinReviews.length} synced
+                        review {asinReviews.length === 1 ? "snippet" : "snippets"} below.
+                      </p>
+                      {summary?.key_purchase_criteria?.length ? (
+                        <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed text-zinc-800">
+                          {summary.key_purchase_criteria.map((criterion) => (
+                            <li key={criterion}>{criterion}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {summary?.why_buyers_like ? (
+                        <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">
+                          {summary.why_buyers_like}
+                        </p>
+                      ) : null}
+                      {!summary?.key_purchase_criteria?.length && !summary?.why_buyers_like ? (
+                        <p className="mt-3 text-sm leading-relaxed text-zinc-600">
+                          {summary?.final_summary
+                            ? summary.final_summary
+                            : asinReviews.length === 0
+                            ? "No reviews were synced for this ASIN, so Gemini could not extract purchase criteria. See the help below the reviews list."
+                            : "Gemini synthesis is still in flight or returned nothing yet. Re-running the analysis usually fixes a transient quota error."}
+                        </p>
+                      ) : null}
+                    </article>
+                    {summary?.why_buyers_caution ? (
+                      <article className="rounded-lg border border-amber-200/70 bg-amber-50/30 px-5 py-4 shadow-sm">
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-900">
+                          What buyers caution about
+                        </h3>
+                        <p className="mt-2 whitespace-pre-wrap leading-relaxed text-zinc-800">
+                          {summary.why_buyers_caution}
+                        </p>
+                      </article>
+                    ) : null}
                     <details className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3" open>
                       <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                        Reviews and purchase drivers ({asinReviews.length} synced)
+                        Latest reviews ({asinReviews.length})
                       </summary>
-                      {summary?.why_buyers_like || (summary?.key_purchase_criteria?.length ?? 0) > 0 ? (
-                        <div className="mt-4 rounded-md border border-blue-100/80 bg-white/90 px-4 py-3 shadow-sm">
-                          <h4 className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-900/80">
-                            Key purchase criteria
-                          </h4>
-                          <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
-                            Synthesized from the synced review snippets below (Gemini).
-                          </p>
-                          {summary?.key_purchase_criteria?.length ? (
-                            <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-zinc-800">
-                              {summary.key_purchase_criteria.map((criterion) => (
-                                <li key={criterion}>{criterion}</li>
-                              ))}
-                            </ul>
-                          ) : null}
-                          {summary?.why_buyers_like ? (
-                            <>
-                              <h5 className="mt-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                                Why people buy
-                              </h5>
-                              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-zinc-800">
-                                {summary.why_buyers_like}
-                              </p>
-                            </>
-                          ) : null}
-                        </div>
-                      ) : null}
                       {asinReviews.length ? (
                         <ul className="mt-4 space-y-4">
                           {asinReviews.map((rv, idx) => {
@@ -594,20 +607,6 @@ export default function JobInsightPage() {
                         </p>
                       )}
                     </details>
-                    {summary?.final_summary ? (
-                      <article>
-                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Executive narrative</h3>
-                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.final_summary}</p>
-                      </article>
-                    ) : (
-                      <p>Gemini output still propagating, or review corpus empty.</p>
-                    )}
-                    {summary?.why_buyers_caution ? (
-                      <article>
-                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Why buyers caution</h3>
-                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.why_buyers_caution}</p>
-                      </article>
-                    ) : null}
                   </div>
                 </details>
               );

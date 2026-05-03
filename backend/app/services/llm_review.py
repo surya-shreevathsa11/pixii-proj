@@ -19,8 +19,15 @@ _CONFIGURE_KEY: list[str | None] = [None]
 # Patterns that indicate a transient (worth retrying) failure vs a hard one.
 _TRANSIENT_ERROR_RX = re.compile(
     r"\b(timeout|timed\s*out|deadline|temporar|throttle|throttling|"
-    r"rate\s*limit|429|500|502|503|504|unavailable|reset|aborted|"
-    r"connection|network)\b",
+    r"rate\s*limit|rate_limit|quota|exhausted|resourceexhausted|"
+    r"429|500|502|503|504|unavailable|reset|aborted|"
+    r"connection|network|service.?unavailable|backoff)\b",
+    re.I,
+)
+
+# Quota / rate-limit errors deserve a longer backoff than other transient errors.
+_QUOTA_ERROR_RX = re.compile(
+    r"\b(quota|exhausted|resourceexhausted|429|rate.?limit)\b",
     re.I,
 )
 
@@ -30,6 +37,11 @@ def _is_transient_error(exc: BaseException) -> bool:
         return True
     msg = f"{type(exc).__name__}: {exc}"
     return bool(_TRANSIENT_ERROR_RX.search(msg))
+
+
+def _is_quota_error(exc: BaseException) -> bool:
+    msg = f"{type(exc).__name__}: {exc}"
+    return bool(_QUOTA_ERROR_RX.search(msg))
 
 
 def _get_gemini_model() -> genai.GenerativeModel | None:
@@ -240,28 +252,41 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
         )
 
     last_exc: Exception | None = None
-    for attempt in range(2):
+    # Up to 3 attempts total. Quota errors get longer backoffs (8s, 24s) so the per-minute
+    # token bucket has a chance to refill; other transient errors retry quickly (1.5s, 4s).
+    quota_backoffs = [8.0, 24.0]
+    transient_backoffs = [1.5, 4.0]
+    for attempt in range(3):
         try:
             return await asyncio.to_thread(_invoke)
         except Exception as exc:
             last_exc = exc
             transient = _is_transient_error(exc)
-            logger.exception(
-                "Gemini single-pass synthesis failed for %s on attempt %d (transient=%s): %s",
+            quota = _is_quota_error(exc)
+            logger.warning(
+                "Gemini single-pass synthesis failed for %s on attempt %d (transient=%s, quota=%s): %s: %s",
                 asin,
                 attempt + 1,
                 transient,
+                quota,
+                type(exc).__name__,
                 exc,
             )
-            if attempt == 0 and transient:
-                await asyncio.sleep(1.5)
+            if attempt < 2 and transient:
+                delay = quota_backoffs[attempt] if quota else transient_backoffs[attempt]
+                await asyncio.sleep(delay)
                 continue
             break
 
     err_label = type(last_exc).__name__ if last_exc else "UnknownError"
+    quota_hint = (
+        " The Gemini free tier hit its per-minute quota; wait ~1 minute and re-run, or set a paid GOOGLE_API_KEY."
+        if last_exc and _is_quota_error(last_exc)
+        else ""
+    )
     return CompetitiveReviewSynthesis(
         final_summary=(
-            f"Gemini synthesis unavailable right now ({err_label}). "
+            f"Gemini synthesis unavailable right now ({err_label}).{quota_hint} "
             f"Showing the {len(review_lines)} captured review snippets for {asin} only."
         ),
         key_purchase_criteria=[],
