@@ -150,7 +150,7 @@ export default function JobInsightPage() {
     <main className="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-12">
       <AppPageHeader
         crumbs={[
-          { label: "Home", href: "/" },
+          { label: "Pixii Market Intel", href: "/" },
           { label: "Insights", href: "/market" },
           { label: `Job ${jobIdShort}` },
         ]}
@@ -159,7 +159,7 @@ export default function JobInsightPage() {
       <header className="flex flex-wrap items-start justify-between gap-4 pb-2">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Insights board</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Pixii Market Intel</p>
             <span
               className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${chipVariant(job?.status ?? "queued")}`}
             >

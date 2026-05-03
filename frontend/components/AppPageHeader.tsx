@@ -26,7 +26,7 @@ export function AppPageHeader({
         </button>
         <span className="select-none text-zinc-300">·</span>
         <Link href="/" className="rounded-md text-blue-600 transition hover:bg-blue-50 hover:text-blue-500">
-          Home
+          Pixii Market Intel
         </Link>
       </div>
       <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">

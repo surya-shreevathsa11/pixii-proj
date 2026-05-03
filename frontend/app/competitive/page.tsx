@@ -46,7 +46,7 @@ export default function CompetitiveWorkspace() {
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-12">
-      <AppPageHeader crumbs={[{ label: "Home", href: "/" }, { label: "SKU + rivals study" }]} />
+      <AppPageHeader crumbs={[{ label: "Pixii Market Intel", href: "/" }, { label: "SKU + rivals study" }]} />
 
       <header className="space-y-2">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Review intelligence</p>

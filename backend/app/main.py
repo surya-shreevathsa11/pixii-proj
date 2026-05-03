@@ -15,7 +15,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Amazon Market + Review Analytics", lifespan=lifespan)
+app = FastAPI(title="Pixii Market Intel", lifespan=lifespan)
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 if not origins:

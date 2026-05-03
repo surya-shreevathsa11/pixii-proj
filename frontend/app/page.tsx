@@ -6,11 +6,10 @@ export default function HomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-10 px-6 py-16">
       <header className="space-y-3">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Pixii vibe build</p>
-        <h1 className="text-4xl font-semibold tracking-tight text-zinc-900">Amazon sizing + shopper voice lab</h1>
+        <h1 className="text-4xl font-semibold tracking-tight text-zinc-900">Pixii Market Intel</h1>
         <p className="text-lg text-zinc-600">
           Queue a Best Sellers scrape or ingest your listing versus nine rivals. The dashboard ranks estimated revenue from
-          BSR telemetry and summarizes review themes via map→reduce Gemini calls.
+          storefront telemetry and summarizes review themes via map→reduce Gemini calls.
         </p>
       </header>
 
