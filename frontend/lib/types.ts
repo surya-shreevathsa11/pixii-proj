@@ -47,6 +47,8 @@ export interface JobDetailResponse {
   status: JobStatus;
   phase: string;
   error_message: string | null;
+  /** Normalized Amazon host used for this job (e.g. amazon.de). */
+  amazon_domain: string;
   bestsellers_url: string | null;
   product_url: string | null;
   competitor_urls: string[];

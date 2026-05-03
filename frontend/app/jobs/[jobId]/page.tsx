@@ -9,6 +9,7 @@ import { RecentAnalyses } from "@/components/RecentAnalyses";
 import { Disclaimer } from "@/components/Disclaimer";
 import { fetchJob } from "@/lib/api";
 import type { JobDetailResponse } from "@/lib/types";
+import { formatStorefrontMoney, localeForAmazonDomain } from "@/lib/storefrontLocale";
 
 const inrFmt = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -91,7 +92,10 @@ function formatListingCategory(listing: JobDetailResponse["listings"][number]) {
   return listing.bsr_category?.trim() || "Category unknown";
 }
 
-function formatStarLine(listing: JobDetailResponse["listings"][number]) {
+function formatStarLine(
+  listing: JobDetailResponse["listings"][number],
+  countFmt: Intl.NumberFormat = numberFmt,
+) {
   const rating = listing.avg_rating;
   const rc = listing.review_count;
   if (rating == null && rc == null) {
@@ -102,7 +106,7 @@ function formatStarLine(listing: JobDetailResponse["listings"][number]) {
     parts.push(`★ ${rating.toFixed(1)}`);
   }
   if (rc != null) {
-    parts.push(`${numberFmt.format(rc)} reviews`);
+    parts.push(`${countFmt.format(rc)} reviews`);
   }
   return parts.join(" · ");
 }
@@ -229,6 +233,15 @@ export default function JobInsightPage() {
     return sum;
   }, [job]);
 
+  const storefrontLocale = useMemo(
+    () => localeForAmazonDomain(job?.amazon_domain ?? "amazon.com"),
+    [job?.amazon_domain],
+  );
+  const storefrontCountFmt = useMemo(
+    () => new Intl.NumberFormat(storefrontLocale),
+    [storefrontLocale],
+  );
+
   const headline = useMemo(() => analysisPageHeadline(job), [job]);
 
   if (!jobId) {
@@ -351,7 +364,7 @@ export default function JobInsightPage() {
           <Stat label="Live phase" value={job.phase || "N/A"} />
           <Stat label="Listings synthesized" value={String(job.listings.length)} />
           <Stat label="Captured reviews" value={String(job.reviews_count_total)} />
-          <Stat label="Rolling rev / mo (sum estimates, INR)" value={inrFmt.format(totalEstimated)} />
+          <Stat label="Rolling rev / mo (INR, normalized sum)" value={inrFmt.format(totalEstimated)} />
         </section>
       ) : null}
 
@@ -381,8 +394,9 @@ export default function JobInsightPage() {
             <div>
               <h2 className="text-xl font-semibold">Estimated monthly revenue leaderboard</h2>
               <p className="text-sm text-zinc-500">
-                Previous-month sales x unit price (INR). Falls back to a BSR-rank heuristic when Amazon hides the
-                "bought in past month" badge.
+                Unit prices use the Amazon storefront currency shown on each PDP. Estimated monthly revenue stays in
+                INR for one comparable rollup. Previous-month sales times unit price (converted to INR) falls back to a
+                BSR heuristic when Amazon hides the bought in past month badge.
               </p>
               {job.flow === "competitive" ? (
                 <p className="mt-2 text-xs text-zinc-500">
@@ -403,15 +417,19 @@ export default function JobInsightPage() {
                   <th className="max-w-lg px-0 py-3 pr-4">ASIN / product</th>
                   <th className="px-0 py-3 pr-4 text-right">BSR</th>
                   <th className="px-0 py-3 pr-4 text-right">Prev-month units</th>
-                  <th className="px-0 py-3 pr-4 text-right">Price</th>
-                  <th className="px-4 py-3 text-right">Est. revenue / mo</th>
+                  <th className="px-0 py-3 pr-4 text-right">Price (storefront)</th>
+                  <th className="px-4 py-3 text-right">Est. revenue / mo (INR)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {job.listings.map((listing, idx) => {
-                  const priceInr = listing.unit_price_inr ?? (listing.currency === "INR" ? listing.price : null);
-                  const showOriginalPrice =
-                    listing.price != null && listing.currency && listing.currency.toUpperCase() !== "INR";
+                  const cur = (listing.currency || "USD").trim().toUpperCase();
+                  const storefrontPrimary =
+                    listing.price != null
+                      ? formatStorefrontMoney(listing.price, cur, storefrontLocale)
+                      : null;
+                  const showInrRubric =
+                    listing.unit_price_inr != null && cur !== "INR" && Number.isFinite(listing.unit_price_inr);
                   return (
                     <tr key={listing.asin} className="align-top transition hover:bg-zinc-50/80">
                       <td className="px-4 py-3 pr-4 text-xs font-mono text-zinc-400">{idx + 1}</td>
@@ -433,8 +451,10 @@ export default function JobInsightPage() {
                             </span>
                           )}
                         </div>
-                        {formatStarLine(listing) ? (
-                          <div className="mt-1.5 text-xs font-medium text-zinc-600">{formatStarLine(listing)}</div>
+                        {formatStarLine(listing, storefrontCountFmt) ? (
+                          <div className="mt-1.5 text-xs font-medium text-zinc-600">
+                            {formatStarLine(listing, storefrontCountFmt)}
+                          </div>
                         ) : null}
                         <div className="mt-2 text-[11px] uppercase tracking-[0.2em] text-zinc-400">
                           {formatListingCategory(listing)}
@@ -443,19 +463,21 @@ export default function JobInsightPage() {
                       <td className="py-3 pr-4 text-right text-zinc-600">{listing.bsr_rank ?? "N/A"}</td>
                       <td className="py-3 pr-4 text-right text-zinc-600">
                         {listing.previous_month_units != null
-                          ? numberFmt.format(listing.previous_month_units)
+                          ? storefrontCountFmt.format(listing.previous_month_units)
                           : "N/A"}
                       </td>
                       <td className="py-3 pr-4 text-right text-zinc-600">
-                        {priceInr != null ? (
+                        {storefrontPrimary != null ? (
                           <div className="space-y-0.5">
-                            <div>{inrPriceFmt.format(priceInr)}</div>
-                            {showOriginalPrice && listing.price != null ? (
-                              <div className="text-[10px] uppercase tracking-wide text-zinc-400">
-                                {listing.currency} {listing.price.toFixed(2)}
+                            <div className="font-medium text-zinc-900">{storefrontPrimary}</div>
+                            {showInrRubric ? (
+                              <div className="text-[10px] leading-snug text-zinc-500">
+                                ≈ {inrPriceFmt.format(listing.unit_price_inr!)} INR for revenue rollup
                               </div>
                             ) : null}
                           </div>
+                        ) : listing.unit_price_inr != null ? (
+                          <div>{inrPriceFmt.format(listing.unit_price_inr)}</div>
                         ) : (
                           "N/A"
                         )}
@@ -514,8 +536,10 @@ export default function JobInsightPage() {
                   <summary className="cursor-pointer select-none text-zinc-900">
                     <span className="font-mono text-sm font-semibold tracking-wide">{listing.asin}</span>
                     <span className="mt-1 block text-sm font-normal text-zinc-600">{titleSnippet}</span>
-                    {formatStarLine(listing) ? (
-                      <span className="mt-1 block text-xs font-medium text-zinc-500">{formatStarLine(listing)}</span>
+                    {formatStarLine(listing, storefrontCountFmt) ? (
+                      <span className="mt-1 block text-xs font-medium text-zinc-500">
+                        {formatStarLine(listing, storefrontCountFmt)}
+                      </span>
                     ) : null}
                     <span className="mt-1 block text-[11px] uppercase tracking-[0.2em] text-zinc-400">
                       {formatListingCategory(listing)}

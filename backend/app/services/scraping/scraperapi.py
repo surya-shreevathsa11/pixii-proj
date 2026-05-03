@@ -1215,11 +1215,150 @@ class ScraperApiScrapingProvider:
             return False
         return bool(_ACCESSORY_TILE_HINT.search(hint))
 
-    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
-        """Collect related ASINs from PDP widgets.
+    @staticmethod
+    def _leading_brand_token(title: str) -> str:
+        t = (title or "").strip()
+        m = re.match(r"^[\W]*([A-Za-z0-9][A-Za-z0-9+&.-]{0,31})", t)
+        return (m.group(1).strip("+-._ ") if m else "").lower()
 
-        Prefer compare/similar carousels; de-prioritize FBT and sponsored blocks where chargers
-        and AppleCare often appear. When the PDP looks like a handset, drop accessory-like tiles.
+    @staticmethod
+    def _hint_likely_same_brand(hint: str, brand: str) -> bool:
+        """Heuristic: first visible product word in tile/search title matches leading brand."""
+        if not brand or len(brand) < 2:
+            return False
+        words = re.findall(r"[A-Za-z0-9&]+", (hint or "").strip())
+        if not words:
+            return False
+        first = words[0].casefold()
+        br = brand.casefold()
+        if first == br:
+            return True
+        # "boAt" vs "Boat" style folding (strip non-alnum)
+        ff = re.sub(r"[^a-z0-9]+", "", first)
+        bf = re.sub(r"[^a-z0-9]+", "", br)
+        if ff and bf and (ff == bf or (len(bf) >= 3 and ff.startswith(bf[: min(4, len(bf))]))):
+            return True
+        return False
+
+    def _serp_keywords_for_cross_shop(self, soup: BeautifulSoup, primary_title: str) -> str:
+        """Build a storefront search query biased toward the category, not the house brand."""
+        browse_l = (self._extract_browse_category(soup) or "").casefold()
+        json_l = (self._extract_jsonld_product_category(soup) or "").casefold()
+        blob = f"{browse_l} {json_l}"
+        if any(x in blob for x in ("smart watch", "smartwatch", "wearable technology", "wrist watch")):
+            return "bluetooth calling smart watch"
+        if any(x in blob for x in ("headphone", "earbud", "ear bud", "in-ear", "over ear", "on-ear")):
+            return "wireless earbuds with mic"
+        if "laptop" in blob or "notebook" in blob:
+            return "laptop computer"
+        if any(x in blob for x in ("smartphone", "mobile phone", "basic mobiles")):
+            return "android smartphone 5g"
+        if any(x in blob for x in ("television", " smart tv", " led tv")):
+            return "smart led tv"
+        if "tablet" in blob:
+            return "android tablet"
+        if any(x in blob for x in ("refrigerator", "fridge", "freezer")):
+            return "double door refrigerator"
+        if any(x in blob for x in ("washing machine", "washer")):
+            return "front load washing machine"
+        if any(x in blob for x in ("air conditioner", " ac ", "split ac")):
+            return "split inverter air conditioner"
+        if any(x in blob for x in ("mixer", "grinder", "food processor")):
+            return "mixer grinder 750w"
+        if any(x in blob for x in ("trimmer", "shaver", "grooming")):
+            return "beard trimmer for men"
+        if any(x in blob for x in ("camera", "dslr", "mirrorless")):
+            return "mirrorless camera"
+        if any(x in blob for x in ("keyboard", "mouse", "monitor")):
+            return "wireless keyboard mouse combo"
+        return self._keywords_from_debranded_title(primary_title)
+
+    _DEBRAND_TITLE_STOP = frozenset(
+        {
+            "with", "for", "and", "the", "men", "women", "unisex", "cm", "inch", "inches",
+            "hd", "display", "storage", "ram", "gb", "tb", "mb", "mah", "w", "v", "hz",
+            "black", "white", "silver", "blue", "red", "green", "grey", "gray", "gold",
+            "active", "pro", "max", "plus", "mini", "new", "latest", "model",
+        },
+    )
+
+    def _keywords_from_debranded_title(self, title: str) -> str:
+        tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9+]*", title or "")
+        if tokens:
+            tokens = tokens[1:]  # drop presumed brand / first token
+        out: list[str] = []
+        for t in tokens:
+            tl = t.casefold()
+            if tl in self._DEBRAND_TITLE_STOP or len(tl) < 2:
+                continue
+            out.append(t)
+            if len(out) >= 6:
+                break
+        return " ".join(out) if out else "electronics"
+
+    def _order_cross_brand_first(
+        self, pairs: list[tuple[str, str]], brand: str,
+    ) -> list[tuple[str, str]]:
+        """Put tiles whose hint does not look like the same house brand first (cross-shop discovery)."""
+        if not brand:
+            return pairs
+        cross: list[tuple[str, str]] = []
+        same: list[tuple[str, str]] = []
+        for a, h in pairs:
+            if self._hint_likely_same_brand(h, brand):
+                same.append((a, h))
+            else:
+                cross.append((a, h))
+        return cross + same
+
+    async def _discover_serp_asin_hints(
+        self, keywords: str, amazon_domain: str, cap: int,
+    ) -> list[tuple[str, str]]:
+        """First search-results page ASINs + short title hints for diversification."""
+        q = keywords.strip()
+        if len(q) < 3:
+            return []
+        site = amazon_site_origin(amazon_domain)
+        path_q = urlencode({"k": q})
+        url = f"{site}/s?{path_q}"
+        _canon, html, status = await self._fetch_html_lenient(url, amazon_domain)
+        if status >= 400 or not html or self._looks_like_blocked(html):
+            logger.info("SERP competitor discovery empty for k=%r status=%s", q[:96], status)
+            return []
+        soup = BeautifulSoup(html, "html.parser")
+        rows: list[tuple[str, str]] = []
+        seen_local: set[str] = set()
+        selectors = (
+            'div[data-component-type="s-search-result"]',
+            "div.s-main-slot div.s-result-item[data-asin]",
+        )
+        for sel in selectors:
+            for div in soup.select(sel):
+                a = (div.get("data-asin") or "").strip().upper()
+                if len(a) != 10 or not a.startswith("B") or a in seen_local:
+                    continue
+                seen_local.add(a)
+                hint = ""
+                for hsel in ("h2 a span.a-text-normal", "h2 span.a-text-normal", "h2 a", ".a-size-mini.a-spacing-none.a-color-base"):
+                    el = div.select_one(hsel)
+                    if el:
+                        hint = el.get_text(" ", strip=True)
+                        if hint and len(hint) > 4:
+                            break
+                rows.append((a, hint[:320]))
+                if len(rows) >= cap:
+                    return rows
+            if len(rows) >= cap:
+                break
+        logger.info("SERP competitor discovery k=%r returned %d ASINs", q[:96], len(rows))
+        return rows
+
+    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
+        """Collect related ASINs from PDP widgets plus a category SERP pass for cross-brand peers.
+
+        Amazon's similar-item carousels often skew to the same manufacturer. We merge those
+        candidates with storefront search results derived from breadcrumbs / product type,
+        then rank other-brand tiles ahead of same-brand so competitive sets include rivals.
         """
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
@@ -1231,17 +1370,17 @@ class ScraperApiScrapingProvider:
         soup = BeautifulSoup(html, "html.parser")
         primary = asin.upper()
         primary_title = self._extract_title(soup)
-        candidates: list[str] = []
+        pairs: list[tuple[str, str]] = []
         seen: set[str] = {primary}
-        gather_cap = max(limit * 4, limit + 8)
+        gather_cap = max(limit * 6, limit + 12)
 
         def try_add(cand: str, hint: str) -> None:
-            if cand in seen or len(candidates) >= gather_cap:
+            if cand in seen or len(pairs) >= gather_cap:
                 return
             if self._discover_should_skip_competitor_tile(primary_title, hint):
                 return
             seen.add(cand)
-            candidates.append(cand)
+            pairs.append((cand, hint or ""))
 
         def harvest_selectors(selectors: tuple[str, ...]) -> None:
             for sel in selectors:
@@ -1251,7 +1390,7 @@ class ScraperApiScrapingProvider:
                         if not cand:
                             continue
                         try_add(cand, self._discover_tile_hint(node))
-                        if len(candidates) >= gather_cap:
+                        if len(pairs) >= gather_cap:
                             return
 
         strict_selectors = (
@@ -1266,21 +1405,21 @@ class ScraperApiScrapingProvider:
         low_trust_selectors = ("#sims-fbt", "#sp_detail", "#sponsoredProducts_feature_div")
 
         harvest_selectors(strict_selectors)
-        if len(candidates) < limit:
+        if len(pairs) < gather_cap:
             harvest_selectors(loose_selectors)
-        if len(candidates) < limit:
+        if len(pairs) < gather_cap:
             harvest_selectors(low_trust_selectors)
 
-        if len(candidates) < limit:
+        if len(pairs) < gather_cap:
             for node in soup.select("[data-asin]"):
                 cand = self._asin_from_data_asin_node(node)
                 if not cand:
                     continue
                 try_add(cand, self._discover_tile_hint(node))
-                if len(candidates) >= gather_cap:
+                if len(pairs) >= gather_cap:
                     break
 
-        if len(candidates) < limit:
+        if len(pairs) < gather_cap:
             for a in soup.select('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'):
                 href = (a.get("href") or "") + ""
                 m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", href, flags=re.I)
@@ -1288,10 +1427,17 @@ class ScraperApiScrapingProvider:
                     cand = m.group(1).upper()
                     if cand.startswith("B") and len(cand) == 10:
                         try_add(cand, "")
-                if len(candidates) >= gather_cap:
+                if len(pairs) >= gather_cap:
                     break
 
-        return candidates[:limit]
+        kw = self._serp_keywords_for_cross_shop(soup, primary_title)
+        if kw and len(pairs) < gather_cap:
+            for a, h in await self._discover_serp_asin_hints(kw, amazon_domain, cap=min(28, gather_cap)):
+                try_add(a, h)
+
+        brand = self._leading_brand_token(primary_title)
+        ordered = self._order_cross_brand_first(pairs, brand)
+        return [a for a, _ in ordered[:limit]]
 
     async def fetch_best_seller_asins(self, bestsellers_page_url: str, amazon_domain: str, limit: int) -> list[str]:
         domain_hint = normalize_amazon_domain(amazon_domain)

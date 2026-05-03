@@ -81,6 +81,8 @@ class JobDetailResponse(BaseModel):
     status: JobStatus
     phase: str
     error_message: Optional[str]
+    # Resolved storefront host used for scraping (e.g. amazon.de), same logic as the job runner.
+    amazon_domain: str = "amazon.com"
     bestsellers_url: Optional[str]
     product_url: Optional[str]
     competitor_urls: list[str]

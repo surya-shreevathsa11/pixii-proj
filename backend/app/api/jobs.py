@@ -17,7 +17,11 @@ from app.schemas import (
     SummaryOut,
 )
 from app.services.job_runner import run_job_task
-from app.services.scraping.util import extract_asin_from_amazon_url
+from app.services.scraping.util import (
+    amazon_domain_from_url,
+    extract_asin_from_amazon_url,
+    normalize_amazon_domain,
+)
 
 router = APIRouter(tags=["jobs"])
 
@@ -65,6 +69,11 @@ def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto
             break
 
     return [mine.upper(), *output[:9]]
+
+
+def _resolved_job_amazon_domain(job: Job) -> str:
+    inferred = amazon_domain_from_url(job.bestsellers_url or job.product_url or "")
+    return inferred or normalize_amazon_domain(settings.amazon_domain)
 
 
 def _ingest_demo_from_listings(listings_rows: list[Listing]) -> bool:
@@ -159,6 +168,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         status=job.status,
         phase=job.phase or "",
         error_message=job.error_message,
+        amazon_domain=_resolved_job_amazon_domain(job),
         bestsellers_url=job.bestsellers_url,
         product_url=job.product_url,
         competitor_urls=competitor_urls,
