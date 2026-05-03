@@ -15,17 +15,17 @@ export function AppPageHeader({
   const router = useRouter();
 
   return (
-    <div className="mb-8 flex flex-col gap-3 border-b border-zinc-200 pb-6">
-      <div className="flex flex-wrap items-center gap-3 text-sm">
+    <div className="mb-8 flex flex-col gap-4 rounded-xl border border-zinc-200/80 bg-white/80 p-4 shadow-sm backdrop-blur">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <button
           type="button"
           onClick={() => router.back()}
-          className="rounded-md text-zinc-600 underline-offset-2 transition hover:bg-zinc-100 hover:text-zinc-900 hover:underline"
+          className="inline-flex items-center rounded-md border border-zinc-200 px-2.5 py-1 text-zinc-700 underline-offset-2 transition hover:bg-zinc-100 hover:text-zinc-900"
         >
           {backLabel}
         </button>
         <span className="select-none text-zinc-300">·</span>
-        <Link href="/" className="rounded-md text-blue-600 transition hover:bg-blue-50 hover:text-blue-500">
+        <Link href="/" className="rounded-md px-2 py-1 text-blue-700 transition hover:bg-blue-50 hover:text-blue-600">
           Pixii Market Intel
         </Link>
       </div>

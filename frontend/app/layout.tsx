@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     default: "Pixii Market Intel",
     template: "%s · Pixii Market Intel",
   },
-  description: "Amazon Best Sellers and competitive SKU intelligence—listing telemetry, review synthesis, and INR revenue estimates.",
+  description: "Amazon Best Sellers and competitive SKU intelligence, listing telemetry, review synthesis, and INR revenue estimates.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

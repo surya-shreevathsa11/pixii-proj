@@ -54,12 +54,12 @@ export default function CompetitiveWorkspace() {
   };
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex max-w-4xl flex-col gap-8 px-6 py-12">
       <AppPageHeader crumbs={[{ label: "Pixii Market Intel", href: "/" }, { label: "SKU + rivals study" }]} />
 
-      <header className="space-y-2">
+      <header className="space-y-3 rounded-2xl border border-zinc-200/80 bg-gradient-to-br from-white to-violet-50/40 p-6 shadow-sm">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Review intelligence</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">SKU + rivals console</h1>
+        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">SKU + rivals console</h1>
         <p className="leading-relaxed text-zinc-600">
           Enter your product URL or ASIN. By default we pull related ASINs from Amazon&apos;s product page (similar / sponsored
           widgets), then harvest listings and reviews. Turn that off to paste up to nine competitor URLs yourself. The analysis page
@@ -68,13 +68,11 @@ export default function CompetitiveWorkspace() {
         </p>
       </header>
 
-      <Disclaimer />
-
       <RecentAnalyses />
 
       <form
         onSubmit={onSubmit}
-        className="space-y-6 rounded-xl border border-zinc-200/80 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5"
+        className="space-y-6 rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5"
       >
         <div className="space-y-3">
           <label htmlFor="mine" className="block text-sm font-medium text-zinc-700">
@@ -98,7 +96,7 @@ export default function CompetitiveWorkspace() {
           </p>
         </div>
 
-        <div className="flex items-start gap-3 rounded-lg border border-zinc-200 bg-zinc-50/80 px-4 py-3">
+        <div className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-4 py-3">
           <input
             id="autoDiscover"
             name="autoDiscover"
@@ -113,7 +111,7 @@ export default function CompetitiveWorkspace() {
             </label>
             <p className="mt-1 text-xs leading-relaxed text-zinc-600">
               Uses <code className="rounded bg-white px-1">data-asin</code> tiles on the PDP (similar items, compare, sponsored). Amazon
-              changes markup often—if discovery returns nothing, try <code className="rounded bg-white px-1">SCRAPERAPI_RENDER=true</code>{" "}
+              changes markup oftenif discovery returns nothing, try <code className="rounded bg-white px-1">SCRAPERAPI_RENDER=true</code>{" "}
               or uncheck this and paste competitor links.
             </p>
           </div>
@@ -155,11 +153,13 @@ export default function CompetitiveWorkspace() {
         <button
           type="submit"
           disabled={busy || !ready}
-          className="inline-flex rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-400"
+          className="inline-flex rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-400"
         >
           {busy ? "Queueing..." : "Start competitor sweep"}
         </button>
       </form>
+
+      <Disclaimer />
     </main>
   );
 }

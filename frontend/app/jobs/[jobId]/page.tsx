@@ -319,8 +319,6 @@ export default function JobInsightPage() {
         </div>
       ) : null}
 
-      <Disclaimer />
-
       {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</p> : null}
 
       {job === null && !error ? <JobLoadingSkeleton /> : null}
@@ -350,7 +348,7 @@ export default function JobInsightPage() {
 
       {job ? (
         <section className="grid gap-4 rounded-xl border border-zinc-100 bg-white p-6 shadow-sm md:grid-cols-4">
-          <Stat label="Live phase" value={job.phase || "—"} />
+          <Stat label="Live phase" value={job.phase || "N/A"} />
           <Stat label="Listings synthesized" value={String(job.listings.length)} />
           <Stat label="Captured reviews" value={String(job.reviews_count_total)} />
           <Stat label="Rolling rev / mo (sum estimates, INR)" value={inrFmt.format(totalEstimated)} />
@@ -442,11 +440,11 @@ export default function JobInsightPage() {
                           {formatListingCategory(listing)}
                         </div>
                       </td>
-                      <td className="py-3 pr-4 text-right text-zinc-600">{listing.bsr_rank ?? "—"}</td>
+                      <td className="py-3 pr-4 text-right text-zinc-600">{listing.bsr_rank ?? "N/A"}</td>
                       <td className="py-3 pr-4 text-right text-zinc-600">
                         {listing.previous_month_units != null
                           ? numberFmt.format(listing.previous_month_units)
-                          : "—"}
+                          : "N/A"}
                       </td>
                       <td className="py-3 pr-4 text-right text-zinc-600">
                         {priceInr != null ? (
@@ -459,14 +457,14 @@ export default function JobInsightPage() {
                             ) : null}
                           </div>
                         ) : (
-                          "—"
+                          "N/A"
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="font-semibold text-zinc-900">
                           {listing.estimated_monthly_revenue != null
                             ? inrFmt.format(listing.estimated_monthly_revenue)
-                            : "—"}
+                            : "N/A"}
                         </div>
                         <span
                           className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${basisChipClass(
@@ -490,7 +488,7 @@ export default function JobInsightPage() {
           <p className="font-semibold">No reviews were stored for this competitive analysis</p>
           <p className="mt-1 text-rose-800/90">
             Competitive analyses normally keep up to ten recent reviews per ASIN (photo reviews ranked first when the
-            scraper marks them). Empty rows usually mean the reviews page did not parse—try{" "}
+            scraper marks them). Empty rows usually mean the reviews page did not parse. Try{" "}
             <code className="rounded bg-white px-1 text-xs">SCRAPERAPI_RENDER=true</code>, confirm{" "}
             <code className="rounded bg-white px-1 text-xs">AMAZON_DOMAIN</code> matches the storefront, or check ScraperAPI
             quotas and HTML samples.
@@ -504,7 +502,7 @@ export default function JobInsightPage() {
           <div className="space-y-3">
             {(job.listings ?? []).map((listing) => {
               const summary = summariesByAsin.get(listing.asin);
-              const displayTitle = (summary?.product_title || listing.title || "").trim() || "—";
+              const displayTitle = (summary?.product_title || listing.title || "").trim() || "N/A";
               const titleSnippet = displayTitle.length > 100 ? `${displayTitle.slice(0, 100)}…` : displayTitle;
               const asinReviews = reviewsByAsin.get(listing.asin) ?? [];
               return (
@@ -566,7 +564,7 @@ export default function JobInsightPage() {
                         <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.final_summary}</p>
                       </article>
                     ) : (
-                      <p>Gemini output still propagating—or review corpus empty.</p>
+                      <p>Gemini output still propagating, or review corpus empty.</p>
                     )}
                     {summary?.why_buyers_like ? (
                       <article>
@@ -597,6 +595,8 @@ export default function JobInsightPage() {
           </div>
         </section>
       ) : null}
+
+      <Disclaimer />
     </main>
   );
 }

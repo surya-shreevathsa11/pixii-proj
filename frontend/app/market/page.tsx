@@ -37,25 +37,23 @@ export default function MarketWorkspace() {
   };
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex max-w-4xl flex-col gap-8 px-6 py-12">
       <AppPageHeader crumbs={[{ label: "Pixii Market Intel", href: "/" }, { label: "Market sizing" }]} />
 
-      <header className="space-y-2">
+      <header className="space-y-3 rounded-2xl border border-zinc-200/80 bg-gradient-to-br from-white to-blue-50/40 p-6 shadow-sm">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Market flow</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">Best Sellers leaderboard</h1>
+        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">Best Sellers leaderboard</h1>
         <p className="leading-relaxed text-zinc-600">
           Paste a category Best Sellers URL. The worker resolves headline ASINs, estimates trailing monthly revenue, and extrapolates
           a blunt whole-market heuristic (clearly labelled as directional only).
         </p>
       </header>
 
-      <Disclaimer />
-
       <RecentAnalyses />
 
       <form
         onSubmit={onSubmit}
-        className="space-y-5 rounded-xl border border-zinc-200/80 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5"
+        className="space-y-5 rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5"
       >
         <label htmlFor="bestsellers" className="block text-sm font-medium text-zinc-700">
           Amazon Best Sellers page URL
@@ -79,11 +77,13 @@ export default function MarketWorkspace() {
         <button
           type="submit"
           disabled={busy || !url}
-          className="inline-flex rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-400"
+          className="inline-flex rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-400"
         >
           {busy ? "Queueing..." : "Run market sweep"}
         </button>
       </form>
+
+      <Disclaimer />
     </main>
   );
 }

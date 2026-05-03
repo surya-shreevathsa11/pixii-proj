@@ -236,7 +236,7 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
         hint = "enable reviews API or widen limits."
         if job.flow != JobFlow.competitive and settings.reviews_only_with_customer_images:
             hint += (
-                " With REVIEWS_ONLY_WITH_CUSTOMER_IMAGES enabled, only reviews that include customer photos are kept—"
+                " With REVIEWS_ONLY_WITH_CUSTOMER_IMAGES enabled, only reviews that include customer photos are kept. "
                 "try SCRAPERAPI_RENDER=true, or set REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false to include all text reviews."
             )
         elif job.flow == JobFlow.competitive:
