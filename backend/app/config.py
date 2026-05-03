@@ -27,10 +27,15 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
-    # Cap on reviews persisted per ASIN (competitive flow). When reviews_only_with_customer_images is True,
-    # only reviews that include customer-uploaded photos count toward this cap.
+    # Cap on reviews persisted per ASIN (market flow, or competitive when not using the small competitive cap).
     max_reviews_per_asin: int = 400
+    # Competitive jobs: ingest only this many reviews per ASIN (recent-first; images preferred via sort, not exclusion).
+    competitive_reviews_per_asin: int = 10
+    # Extra rows to fetch before sorting (image preference) and trimming to competitive_reviews_per_asin.
+    competitive_review_fetch_buffer: int = 40
     review_batch_map_size: int = 100
+    # When True, market-style jobs still skip reviews without customer photos. Competitive flow ignores this
+    # for filtering and only uses it as a soft preference in ranking.
     reviews_only_with_customer_images: bool = True
 
 

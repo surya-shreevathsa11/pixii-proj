@@ -10,7 +10,13 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import engine
 from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
-from app.services.llm_review import batch_map_review_themes, format_review_batches, reduce_review_map
+from app.services.scraping.base import NormalizedReview
+from app.services.llm_review import (
+    batch_map_review_themes,
+    format_review_batches,
+    reduce_review_map,
+    synthesize_reviews_single_pass,
+)
 from app.services.revenue import (
     compute_revenue_inr,
     convert_to_inr,
@@ -32,7 +38,28 @@ def persist_job_touch(session: Session, job: Job) -> None:
     session.refresh(job)
 
 
-async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: str, session: Session) -> int:
+async def ingest_reviews(
+    provider,
+    amazon_domain: str,
+    job_id: uuid.UUID,
+    asin: str,
+    session: Session,
+    flow: JobFlow,
+) -> int:
+    """Persist reviews for one ASIN.
+
+    * **Market**: keep up to ``max_reviews_per_asin``; if ``reviews_only_with_customer_images`` is true,
+      skip reviews without customer photos (legacy behavior).
+    * **Competitive**: fetch up to ``competitive_review_fetch_buffer`` recent rows, sort by
+      ``(-has_customer_images, arrival_index)`` so images are preferred among equally recent rows,
+      then persist only ``competitive_reviews_per_asin`` (including text-only reviews to fill the cap).
+    """
+    if flow == JobFlow.competitive:
+        return await _ingest_reviews_competitive(provider, amazon_domain, job_id, asin, session)
+    return await _ingest_reviews_market(provider, amazon_domain, job_id, asin, session)
+
+
+async def _ingest_reviews_market(provider, amazon_domain: str, job_id: uuid.UUID, asin: str, session: Session) -> int:
     page = 1
     collected = 0
     empty_pages = 0
@@ -62,7 +89,8 @@ async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: 
                 continue
 
             body = rv.body or ""
-            if getattr(rv, "has_customer_images", False):
+            has_img = bool(getattr(rv, "has_customer_images", False))
+            if has_img:
                 body = f"[Customer photos in review] {body}".strip()
 
             session.add(
@@ -75,6 +103,7 @@ async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: 
                     body=body[:8192],
                     review_date=rv.review_date,
                     is_verified_purchase=rv.is_verified_purchase,
+                    has_customer_images=has_img,
                 )
             )
             collected += 1
@@ -97,6 +126,102 @@ async def ingest_reviews(provider, amazon_domain: str, job_id: uuid.UUID, asin: 
     return collected
 
 
+async def _ingest_reviews_competitive(
+    provider, amazon_domain: str, job_id: uuid.UUID, asin: str, session: Session,
+) -> int:
+    target = max(1, settings.competitive_reviews_per_asin)
+    buffer_cap = max(target, settings.competitive_review_fetch_buffer)
+    buffer: list[tuple[int, NormalizedReview]] = []
+    seq = 0
+    page = 1
+    empty_pages = 0
+
+    while len(buffer) < buffer_cap:
+        rows, next_token = await provider.fetch_reviews_page(asin, amazon_domain, str(page))
+        if not rows:
+            empty_pages += 1
+            if empty_pages >= 2:
+                break
+            page += 1
+            continue
+
+        empty_pages = 0
+        seen_ids = {rv.external_id for _, rv in buffer}
+        for rv in rows:
+            if rv.external_id in seen_ids:
+                continue
+            buffer.append((seq, rv))
+            seq += 1
+            seen_ids.add(rv.external_id)
+            if len(buffer) >= buffer_cap:
+                break
+
+        session.commit()
+
+        if len(buffer) >= buffer_cap:
+            break
+        if next_token and next_token.isdigit():
+            page = max(1, int(next_token))
+        else:
+            page += 1
+        if page > 40:
+            break
+
+    def _rv_sort_key(item: tuple[int, NormalizedReview]) -> tuple[int, float, int]:
+        seq, rv = item
+        ts = 0.0
+        raw = (rv.review_date or "").strip()[:48]
+        if raw:
+            for fmt in ("%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%b %d, %Y", "%d %b %Y"):
+                try:
+                    dt = datetime.strptime(raw, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    ts = dt.timestamp()
+                    break
+                except ValueError:
+                    continue
+        has_img = int(bool(getattr(rv, "has_customer_images", False)))
+        return (has_img, ts, -seq)
+
+    buffer.sort(key=_rv_sort_key, reverse=True)
+    chosen = buffer[:target]
+
+    persisted = 0
+    for _idx, rv in chosen:
+        stmt = (
+            select(Review)
+            .where(Review.job_id == job_id)
+            .where(Review.asin == asin)
+            .where(Review.external_id == rv.external_id)
+        )
+        if session.exec(stmt).first():
+            continue
+
+        body = rv.body or ""
+        has_img = bool(getattr(rv, "has_customer_images", False))
+        if has_img:
+            body = f"[Customer photos in review] {body}".strip()
+
+        session.add(
+            Review(
+                job_id=job_id,
+                asin=asin.upper(),
+                external_id=rv.external_id,
+                rating=rv.rating,
+                title=rv.title,
+                body=body[:8192],
+                review_date=rv.review_date,
+                is_verified_purchase=rv.is_verified_purchase,
+                has_customer_images=has_img,
+            )
+        )
+        persisted += 1
+
+    session.commit()
+    return persisted
+
+
 async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     if session.exec(
         select(Summary).where(Summary.job_id == job.id).where(Summary.asin == asin)
@@ -114,11 +239,13 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
 
     if not reviews_rows:
         hint = "enable reviews API or widen limits."
-        if settings.reviews_only_with_customer_images:
+        if job.flow != JobFlow.competitive and settings.reviews_only_with_customer_images:
             hint += (
                 " With REVIEWS_ONLY_WITH_CUSTOMER_IMAGES enabled, only reviews that include customer photos are kept—"
                 "try SCRAPERAPI_RENDER=true, or set REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false to include all text reviews."
             )
+        elif job.flow == JobFlow.competitive:
+            hint += " Competitive jobs keep up to ten recent reviews per ASIN (image-heavy reviews ranked first when available)."
         stub = Summary(
             job_id=job.id,
             asin=asin,
@@ -130,28 +257,48 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
         session.commit()
         return
 
-    bodies = [r.body or "" for r in reviews_rows]
-    ratings = [r.rating for r in reviews_rows]
-    batches_txt = format_review_batches(bodies, ratings, settings.review_batch_map_size)
+    competitive_cap = max(1, settings.competitive_reviews_per_asin)
+    use_single_pass = job.flow == JobFlow.competitive and len(reviews_rows) <= competitive_cap
 
-    map_batches: list[dict] = []
-    for batch in batches_txt:
-        if not batch:
-            continue
-        line_idx = len(map_batches)
-        formatted = [f"[{asin}-map{line_idx}] {line}" for line in batch]
-        themed = await batch_map_review_themes(product_title or asin, formatted)
-        map_batches.append(themed)
+    if use_single_pass:
+        lines: list[str] = []
+        for r in reviews_rows:
+            rr = r.rating if r.rating is not None else "?"
+            safe = (r.body or "").replace("\n", " ").strip()
+            lines.append(f"Rating {rr}: {safe}")
+        synth = await synthesize_reviews_single_pass(asin, product_title or "", lines)
+        summary_row = Summary(
+            job_id=job.id,
+            asin=asin,
+            map_batches=[],
+            final_summary=synth.final_summary[:65000],
+            key_purchase_criteria=synth.key_purchase_criteria,
+            why_buyers_like=(synth.why_buyers_like or "")[:16000] or None,
+            why_buyers_caution=(synth.why_buyers_caution or "")[:16000] or None,
+        )
+    else:
+        bodies = [r.body or "" for r in reviews_rows]
+        ratings = [r.rating for r in reviews_rows]
+        batches_txt = format_review_batches(bodies, ratings, settings.review_batch_map_size)
 
-    final_summary, kp = await reduce_review_map(asin, product_title or "", map_batches)
+        map_batches: list[dict] = []
+        for batch in batches_txt:
+            if not batch:
+                continue
+            line_idx = len(map_batches)
+            formatted = [f"[{asin}-map{line_idx}] {line}" for line in batch]
+            themed = await batch_map_review_themes(product_title or asin, formatted)
+            map_batches.append(themed)
 
-    summary_row = Summary(
-        job_id=job.id,
-        asin=asin,
-        map_batches=map_batches,
-        final_summary=final_summary[:65000],
-        key_purchase_criteria=kp,
-    )
+        final_summary, kp = await reduce_review_map(asin, product_title or "", map_batches)
+
+        summary_row = Summary(
+            job_id=job.id,
+            asin=asin,
+            map_batches=map_batches,
+            final_summary=final_summary[:65000],
+            key_purchase_criteria=kp,
+        )
     session.add(summary_row)
     session.commit()
 
@@ -241,6 +388,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 row.currency = nl.currency or "USD"
                 row.bsr_rank = nl.bsr_rank
                 row.bsr_category = nl.bsr_category
+                row.product_category = nl.product_category
                 row.avg_rating = nl.avg_rating
                 row.review_count = nl.review_count
                 row.canonical_url = nl.canonical_url
@@ -308,7 +456,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 for asin_idx, asin in enumerate(target_asins, start=1):
                     job.phase = f"Harvesting reviews ({asin_idx}/{total or 1}): {asin}"
                     persist_job_touch(session, job)
-                    await ingest_reviews(provider, amazon_domain, job.id, asin, session)
+                    await ingest_reviews(provider, amazon_domain, job.id, asin, session, job.flow)
 
                 job.phase = "LLM aggregation"
                 persist_job_touch(session, job)

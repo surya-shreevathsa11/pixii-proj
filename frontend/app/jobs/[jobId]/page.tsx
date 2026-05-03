@@ -25,6 +25,30 @@ const inrPriceFmt = new Intl.NumberFormat("en-IN", {
 
 const numberFmt = new Intl.NumberFormat("en-IN");
 
+function formatListingCategory(listing: JobDetailResponse["listings"][number]) {
+  const browse = listing.product_category?.trim();
+  if (browse) {
+    return browse;
+  }
+  return listing.bsr_category?.trim() || "Category unknown";
+}
+
+function formatStarLine(listing: JobDetailResponse["listings"][number]) {
+  const rating = listing.avg_rating;
+  const rc = listing.review_count;
+  if (rating == null && rc == null) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (rating != null) {
+    parts.push(`★ ${rating.toFixed(1)}`);
+  }
+  if (rc != null) {
+    parts.push(`${numberFmt.format(rc)} reviews`);
+  }
+  return parts.join(" · ");
+}
+
 function basisChipClass(basis: string) {
   switch (basis) {
     case "bought_past_month":
@@ -127,6 +151,19 @@ export default function JobInsightPage() {
     const lookup = new Map<string, JobDetailResponse["summaries"][number]>();
     job?.summaries.forEach((row) => lookup.set(row.asin, row));
     return lookup;
+  }, [job]);
+
+  const reviewsByAsin = useMemo(() => {
+    const map = new Map<string, NonNullable<JobDetailResponse["reviews"]>>();
+    (job?.reviews ?? []).forEach((row) => {
+      const bucket = map.get(row.asin) ?? [];
+      bucket.push(row);
+      map.set(row.asin, bucket);
+    });
+    map.forEach((rows, key) => {
+      map.set(key, [...rows].reverse());
+    });
+    return map;
   }, [job]);
 
   const totalEstimated = useMemo(() => {
@@ -341,8 +378,11 @@ export default function JobInsightPage() {
                             </span>
                           )}
                         </div>
+                        {formatStarLine(listing) ? (
+                          <div className="mt-1.5 text-xs font-medium text-zinc-600">{formatStarLine(listing)}</div>
+                        ) : null}
                         <div className="mt-2 text-[11px] uppercase tracking-[0.2em] text-zinc-400">
-                          {listing.bsr_category ?? "Category unknown"}
+                          {formatListingCategory(listing)}
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-right text-zinc-600">{listing.bsr_rank ?? "—"}</td>
@@ -392,10 +432,11 @@ export default function JobInsightPage() {
         <div className="rounded-lg border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900" role="status">
           <p className="font-semibold">No reviews were stored for this competitive job</p>
           <p className="mt-1 text-rose-800/90">
-            The worker may be keeping only reviews with customer photos, or the scraper returned no rows (blocked page,
-            thin parse). Try <code className="rounded bg-white px-1 text-xs">SCRAPERAPI_RENDER=true</code>, or set{" "}
-            <code className="rounded bg-white px-1 text-xs">REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false</code> in{" "}
-            <code className="rounded bg-white px-1 text-xs">backend/.env</code> to ingest all text reviews again.
+            Competitive jobs normally keep up to ten recent reviews per ASIN (photo reviews ranked first when the
+            scraper marks them). Empty rows usually mean the reviews page did not parse—try{" "}
+            <code className="rounded bg-white px-1 text-xs">SCRAPERAPI_RENDER=true</code>, confirm{" "}
+            <code className="rounded bg-white px-1 text-xs">AMAZON_DOMAIN</code> matches the storefront, or check ScraperAPI
+            quotas and HTML samples.
           </p>
         </div>
       ) : null}
@@ -408,6 +449,7 @@ export default function JobInsightPage() {
               const summary = summariesByAsin.get(listing.asin);
               const displayTitle = (summary?.product_title || listing.title || "").trim() || "—";
               const titleSnippet = displayTitle.length > 100 ? `${displayTitle.slice(0, 100)}…` : displayTitle;
+              const asinReviews = reviewsByAsin.get(listing.asin) ?? [];
               return (
                 <details
                   key={listing.asin}
@@ -417,6 +459,12 @@ export default function JobInsightPage() {
                   <summary className="cursor-pointer select-none text-zinc-900">
                     <span className="font-mono text-sm font-semibold tracking-wide">{listing.asin}</span>
                     <span className="mt-1 block text-sm font-normal text-zinc-600">{titleSnippet}</span>
+                    {formatStarLine(listing) ? (
+                      <span className="mt-1 block text-xs font-medium text-zinc-500">{formatStarLine(listing)}</span>
+                    ) : null}
+                    <span className="mt-1 block text-[11px] uppercase tracking-[0.2em] text-zinc-400">
+                      {formatListingCategory(listing)}
+                    </span>
                   </summary>
                   <div className="space-y-4 pt-6 text-sm text-zinc-700">
                     {summary?.final_summary ? (
@@ -427,6 +475,18 @@ export default function JobInsightPage() {
                     ) : (
                       <p>Gemini output still propagating—or review corpus empty.</p>
                     )}
+                    {summary?.why_buyers_like ? (
+                      <article>
+                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Why buyers like it</h3>
+                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.why_buyers_like}</p>
+                      </article>
+                    ) : null}
+                    {summary?.why_buyers_caution ? (
+                      <article>
+                        <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Why buyers caution</h3>
+                        <p className="mt-2 whitespace-pre-wrap leading-relaxed">{summary.why_buyers_caution}</p>
+                      </article>
+                    ) : null}
                     {summary?.key_purchase_criteria?.length ? (
                       <div>
                         <h3 className="text-xs uppercase tracking-[0.3em] text-zinc-400">Key PDP purchase criteria</h3>
@@ -436,6 +496,36 @@ export default function JobInsightPage() {
                           ))}
                         </ul>
                       </div>
+                    ) : null}
+                    {asinReviews.length ? (
+                      <details className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3">
+                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+                          Latest reviews ({asinReviews.length})
+                        </summary>
+                        <ul className="mt-4 space-y-4">
+                          {asinReviews.map((rv, idx) => {
+                            const preview =
+                              rv.body.length > 360 ? `${rv.body.slice(0, 360).trimEnd()}…` : rv.body;
+                            const headline = [rv.rating != null ? `★${rv.rating}` : null, rv.review_date, rv.verified ? "Verified" : null]
+                              .filter(Boolean)
+                              .join(" · ");
+                            return (
+                              <li key={`${listing.asin}-rv-${idx}`} className="text-sm">
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                                  <span>{headline || "Review"}</span>
+                                  {rv.has_customer_images ? (
+                                    <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+                                      Photos
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {rv.title ? <p className="mt-1 font-medium text-zinc-800">{rv.title}</p> : null}
+                                <p className="mt-1 leading-relaxed text-zinc-600">{preview}</p>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </details>
                     ) : null}
                   </div>
                 </details>

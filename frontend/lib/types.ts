@@ -11,6 +11,7 @@ export interface ListingOut {
   currency: string;
   bsr_rank: number | null;
   bsr_category: string | null;
+  product_category?: string | null;
   avg_rating: number | null;
   review_count: number | null;
   canonical_url: string | null;
@@ -26,6 +27,18 @@ export interface SummaryOut {
   product_title: string;
   final_summary: string;
   key_purchase_criteria: string[];
+  why_buyers_like?: string | null;
+  why_buyers_caution?: string | null;
+}
+
+export interface ReviewOut {
+  asin: string;
+  rating: number | null;
+  title: string | null;
+  body: string;
+  review_date: string | null;
+  has_customer_images: boolean;
+  verified: boolean;
 }
 
 export interface JobDetailResponse {
@@ -41,6 +54,7 @@ export interface JobDetailResponse {
   market_totals_note: string | null;
   listings: ListingOut[];
   summaries: SummaryOut[];
+  reviews?: ReviewOut[];
   reviews_count_total: number;
   created_at: string;
   ingest_demo: boolean;

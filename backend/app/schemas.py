@@ -45,6 +45,7 @@ class ListingOut(BaseModel):
     currency: str
     bsr_rank: Optional[int]
     bsr_category: Optional[str]
+    product_category: Optional[str] = None
     avg_rating: Optional[float]
     review_count: Optional[int]
     canonical_url: Optional[str]
@@ -60,6 +61,18 @@ class SummaryOut(BaseModel):
     product_title: str = ""
     final_summary: str
     key_purchase_criteria: list[str]
+    why_buyers_like: Optional[str] = None
+    why_buyers_caution: Optional[str] = None
+
+
+class ReviewOut(BaseModel):
+    asin: str
+    rating: Optional[int] = None
+    title: Optional[str] = None
+    body: str = ""
+    review_date: Optional[str] = None
+    has_customer_images: bool = False
+    verified: bool = False
 
 
 class JobDetailResponse(BaseModel):
@@ -75,6 +88,7 @@ class JobDetailResponse(BaseModel):
     market_totals_note: Optional[str]
     listings: list[ListingOut]
     summaries: list[SummaryOut]
+    reviews: list[ReviewOut] = Field(default_factory=list)
     reviews_count_total: int
     created_at: datetime
     ingest_demo: bool = False

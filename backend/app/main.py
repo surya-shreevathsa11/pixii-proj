@@ -21,9 +21,17 @@ origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 if not origins:
     origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+# Any dev port on localhost / LAN — avoids "NetworkError" when Next runs on :3001 or you open via 192.168.x.x.
+_dev_origin_regex = (
+    r"https?://("
+    r"localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r")(?::\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=_dev_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -19,6 +19,8 @@ class NormalizedListing:
     previous_month_units: Optional[int] = None
     # Raw badge text we parsed, useful for showing the source in the UI.
     previous_month_label: Optional[str] = None
+    # Browse path / JSON-LD when BSR category line is missing.
+    product_category: Optional[str] = None
 
 
 @dataclass

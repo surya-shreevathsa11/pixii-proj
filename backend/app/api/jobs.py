@@ -1,4 +1,5 @@
 import uuid
+from collections import defaultdict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
@@ -6,7 +7,15 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import get_session
 from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
-from app.schemas import CompetitiveJobCreate, JobCreateResponse, JobDetailResponse, ListingOut, MarketJobCreate, SummaryOut
+from app.schemas import (
+    CompetitiveJobCreate,
+    JobCreateResponse,
+    JobDetailResponse,
+    ListingOut,
+    MarketJobCreate,
+    ReviewOut,
+    SummaryOut,
+)
 from app.services.job_runner import run_job_task
 from app.services.scraping.util import extract_asin_from_amazon_url
 
@@ -77,6 +86,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
             currency=row.currency,
             bsr_rank=row.bsr_rank,
             bsr_category=row.bsr_category,
+            product_category=row.product_category,
             avg_rating=row.avg_rating,
             review_count=row.review_count,
             canonical_url=row.canonical_url,
@@ -97,9 +107,37 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
             product_title=titles_by_asin.get(row.asin, ""),
             final_summary=row.final_summary,
             key_purchase_criteria=row.key_purchase_criteria or [],
+            why_buyers_like=row.why_buyers_like,
+            why_buyers_caution=row.why_buyers_caution,
         )
         for row in summaries_rows
     ]
+
+    per_asin_cap = max(10, settings.competitive_reviews_per_asin)
+    reviews_rows = session.exec(
+        select(Review).where(Review.job_id == job.id).order_by(Review.created_at.desc())
+    ).all()
+    picked_by_asin: dict[str, list[Review]] = defaultdict(list)
+    for rv in reviews_rows:
+        if len(picked_by_asin[rv.asin]) >= per_asin_cap:
+            continue
+        picked_by_asin[rv.asin].append(rv)
+
+    reviews_out: list[ReviewOut] = []
+    for asin_key in sorted(picked_by_asin.keys()):
+        for rv in reversed(picked_by_asin[asin_key]):
+            snippet = (rv.body or "")[:2000]
+            reviews_out.append(
+                ReviewOut(
+                    asin=rv.asin,
+                    rating=rv.rating,
+                    title=rv.title,
+                    body=snippet,
+                    review_date=rv.review_date,
+                    has_customer_images=bool(rv.has_customer_images),
+                    verified=bool(rv.is_verified_purchase),
+                )
+            )
 
     competitor_urls = job.competitor_urls or []
 
@@ -119,6 +157,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         market_totals_note=job.market_totals_note,
         listings=sorted(listings_out, key=lambda listing: -(listing.estimated_monthly_revenue or 0.0)),
         summaries=sorted(summaries_out, key=lambda sm: sm.asin),
+        reviews=reviews_out,
         reviews_count_total=len(reviews_total),
         created_at=job.created_at,
         ingest_demo=ingest_demo,

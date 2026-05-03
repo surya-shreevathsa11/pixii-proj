@@ -65,6 +65,8 @@ class Listing(SQLModel, table=True):
     revenue_basis: str = Field(default="unknown", max_length=32)
     # Listing.price normalized to INR using the FX rate captured at job time.
     unit_price_inr: Optional[float] = Field(default=None)
+    # Browse path / JSON-LD category when BSR category is missing (e.g. "Home & Kitchen › Mosquito Nets").
+    product_category: Optional[str] = Field(default=None, max_length=512)
 
     captured_at: datetime = Field(default_factory=utc_now)
     raw_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
@@ -82,6 +84,7 @@ class Review(SQLModel, table=True):
     body: str = Field(default="", max_length=8192)
     review_date: Optional[str] = Field(default=None, max_length=32)
     is_verified_purchase: bool = Field(default=False)
+    has_customer_images: bool = Field(default=False)
 
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -95,5 +98,7 @@ class Summary(SQLModel, table=True):
     map_batches: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     final_summary: str = Field(default="", max_length=65000)
     key_purchase_criteria: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    why_buyers_like: Optional[str] = Field(default=None, max_length=16000)
+    why_buyers_caution: Optional[str] = Field(default=None, max_length=16000)
 
     created_at: datetime = Field(default_factory=utc_now)

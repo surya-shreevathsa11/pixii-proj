@@ -10,11 +10,12 @@ samples for tightening selectors locally.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
@@ -275,10 +276,37 @@ class ScraperApiScrapingProvider:
             return "JPY"
         if "cdn" in t.lower() or "ca$" in t.lower() or "c $" in t.lower():
             return "CAD"
-        if "₹" in t or "rs." in t.lower() or "inr" in t.lower():
+        if "₹" in t or "rs." in t.lower() or "rs " in t.lower() or "inr" in t.lower() or "rupees" in t.lower():
             return "INR"
         if "$" in t or "usd" in t.lower():
             return "USD"
+        return "USD"
+
+    @staticmethod
+    def _default_currency_for_store(store_domain: Optional[str]) -> str:
+        d = (store_domain or "").lower().strip()
+        if "amazon.in" in d or d == "amazon.in":
+            return "INR"
+        if "amazon.co.uk" in d or "amazon.uk" in d:
+            return "GBP"
+        if "amazon.de" in d:
+            return "EUR"
+        if "amazon.fr" in d:
+            return "EUR"
+        if "amazon.it" in d:
+            return "EUR"
+        if "amazon.es" in d:
+            return "EUR"
+        if "amazon.co.jp" in d or "amazon.jp" in d:
+            return "JPY"
+        if "amazon.ca" in d:
+            return "CAD"
+        if "amazon.com.au" in d or "amazon.au" in d:
+            return "AUD"
+        if "amazon.ae" in d:
+            return "AED"
+        if "amazon.sg" in d:
+            return "SGD"
         return "USD"
 
     @staticmethod
@@ -294,55 +322,290 @@ class ScraperApiScrapingProvider:
             if len(parts) == 2 and len(parts[1]) in (1, 2):
                 s = parts[0] + "." + parts[1]
             else:
+                # Thousands separators (US/IN style) or Indian grouping — strip commas.
                 s = s.replace(",", "")
         try:
             return float(s)
         except ValueError:
             return None
 
-    def _extract_price_currency(self, soup: BeautifulSoup) -> tuple[Optional[float], str]:
-        whole_sels = soup.select(".a-price:not(.a-text-price) .a-price-whole")
-        frac_sels = soup.select(".a-price:not(.a-text-price) .a-price-fraction")
-        if whole_sels:
-            integral = "".join(ch for ch in whole_sels[0].get_text() if ch.isdigit())
-            fr = frac_sels[0].get_text(strip=True) if frac_sels else ""
-            fr_digits = ("".join(ch for ch in fr if ch.isdigit()) + "00")[:2]
-            if integral:
-                try:
-                    amt = float(f"{integral}.{fr_digits}")
-                    parent_txt = ""
-                    p = whole_sels[0].find_parent(class_=re.compile("a-price"))
-                    if p:
-                        parent_txt = p.get_text(" ", strip=True)
-                    cur = self._currency_from_price_text(parent_txt or whole_sels[0].get_text(" ", strip=True))
+    @staticmethod
+    def _looks_like_price_offscreen(text: str) -> bool:
+        t = text.strip()
+        if not t or len(t) > 56:
+            return False
+        low = t.lower()
+        if re.search(r"out\s+of\s+5|stars?|answered\s+questions|visit\s+the|store|delivery|coupon|subscribe", low):
+            return False
+        if re.search(r"[₹$£€]|rs\.?\s*\d|inr|usd|gbp|eur", low):
+            return True
+        # Buy box sometimes exposes only digits inside a price subtree (symbol in sibling).
+        if re.fullmatch(r"[\d,]+(?:\.\d{1,2})?", t) and len(t) <= 16:
+            return True
+        return False
+
+    @classmethod
+    def _parse_price_line(cls, line: str) -> tuple[Optional[float], str]:
+        """Parse a single human-readable price line (e.g. '₹1,999.00' or '$19.99')."""
+        txt = line.strip()
+        if not txt:
+            return None, cls._currency_from_price_text("")
+        cur = cls._currency_from_price_text(txt)
+        # Strip currency words/symbols then take the first substantial number run.
+        cleaned = re.sub(r"[₹$£€]|rs\.?|inr|usd|gbp|eur", "", txt, flags=re.I)
+        cleaned = cleaned.strip()
+        m = re.search(r"([\d][\d,\.]*)", cleaned)
+        if not m:
+            return None, cur
+        amt = cls._parse_amount_string(m.group(1))
+        return amt, cur
+
+    @classmethod
+    def _price_from_offer_dict(cls, offer: dict) -> tuple[Optional[float], Optional[str]]:
+        if not isinstance(offer, dict):
+            return None, None
+        otype = offer.get("@type")
+        price = None
+        if otype == "AggregateOffer":
+            price = offer.get("lowPrice") or offer.get("highPrice") or offer.get("price")
+        else:
+            price = offer.get("price")
+        if price is None:
+            return None, None
+        cur = offer.get("priceCurrency")
+        try:
+            val = float(str(price).replace(",", "").strip())
+        except (TypeError, ValueError):
+            return None, None
+        if val <= 0:
+            return None, None
+        return val, (str(cur).upper() if cur else None)
+
+    @classmethod
+    def _extract_price_from_json_ld(cls, soup: BeautifulSoup) -> tuple[Optional[float], Optional[str]]:
+        for script in soup.find_all("script", type=re.compile(r"application/ld\+json", re.I)):
+            raw = (script.string or script.get_text() or "").strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            def walk(node) -> tuple[Optional[float], Optional[str]]:
+                if isinstance(node, dict):
+                    types = node.get("@type")
+                    is_product = types == "Product" or (isinstance(types, list) and "Product" in types)
+                    if is_product:
+                        offers = node.get("offers")
+                        if isinstance(offers, list):
+                            for off in offers:
+                                p, c = cls._price_from_offer_dict(off if isinstance(off, dict) else {})
+                                if p is not None:
+                                    return p, c
+                        elif isinstance(offers, dict):
+                            p, c = cls._price_from_offer_dict(offers)
+                            if p is not None:
+                                return p, c
+                    if "@graph" in node:
+                        for item in node.get("@graph") or []:
+                            p, c = walk(item)
+                            if p is not None:
+                                return p, c
+                elif isinstance(node, list):
+                    for it in node:
+                        p, c = walk(it)
+                        if p is not None:
+                            return p, c
+                return None, None
+
+            found = walk(data)
+            if found[0] is not None:
+                return found
+        return None, None
+
+    @classmethod
+    def _extract_price_from_meta(cls, soup: BeautifulSoup) -> tuple[Optional[float], Optional[str]]:
+        pairs = (
+            ("og:price:amount", "og:price:currency"),
+            ("product:price:amount", "product:price:currency"),
+        )
+        for amt_prop, cur_prop in pairs:
+            am_el = soup.find("meta", property=amt_prop)
+            if not am_el or not am_el.get("content"):
+                continue
+            amt = cls._parse_amount_string(am_el["content"])
+            if amt is None or amt <= 0:
+                continue
+            cur_el = soup.find("meta", property=cur_prop)
+            cur = (cur_el.get("content") or "").strip().upper() if cur_el else ""
+            if not cur:
+                cur = cls._currency_from_price_text(am_el.get("content", ""))
+            return amt, cur or "USD"
+
+        ip = soup.find("meta", attrs={"itemprop": "price"})
+        if ip and ip.get("content"):
+            amt = cls._parse_amount_string(ip["content"])
+            if amt is not None and amt > 0:
+                cur_el = soup.find("meta", attrs={"itemprop": "priceCurrency"})
+                cur = (cur_el.get("content") or "").strip().upper() if cur_el else ""
+                return amt, cur or "USD"
+        return None, None
+
+    @classmethod
+    def _extract_price_from_embedded_json(
+        cls, html: str, store_domain: Optional[str],
+    ) -> tuple[Optional[float], Optional[str]]:
+        """Best-effort parse of common Amazon client-render price blobs (esp. .in mobile / twister)."""
+        default_cur = cls._default_currency_for_store(store_domain)
+        # "priceToPay":{"moneyValue":{"amount":1999.0,...},"displayString":"₹1,999.00"}
+        m = re.search(
+            r'"priceToPay"\s*:\s*\{[^}]*"moneyValue"\s*:\s*\{[^}]*"amount"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+            html,
+        )
+        if m:
+            try:
+                val = float(m.group(1))
+                if val > 0:
+                    window = html[max(0, m.start() - 500) : m.start() + 300]
+                    cur = default_cur
+                    if "₹" in window or "Rs." in window or "INR" in window.upper():
+                        cur = "INR"
+                    elif "$" in window and default_cur == "USD":
+                        cur = "USD"
+                    return val, cur
+            except ValueError:
+                pass
+        return None, None
+
+    _BUYBOX_ROOT_SELECTORS: tuple[str, ...] = (
+        "#reinventPrice_feature_div",
+        ".reinventPricePriceToPayMargin",
+        "#corePrice_feature_div",
+        "#corePriceDisplay_desktop_feature_div",
+        "#corePriceDisplay_mobile_feature_div",
+        "#apex_desktop_desktopDisplayPrice",
+        "#apex_desktop",
+        "#apex_offerDisplay_desktop",
+        "#unifiedPrice_feature_div",
+        "#desktop_buybox",
+        "#buybox",
+        "#snsAccordionRowMiddle",
+        "#twister-plus-price-data-price",
+    )
+
+    def _extract_price_from_buybox(self, soup: BeautifulSoup, default_cur: str) -> tuple[Optional[float], str]:
+        """Prefer visible buy-box prices; avoids carousel / compare-at / sponsored tiles."""
+        for sel in self._BUYBOX_ROOT_SELECTORS:
+            root = soup.select_one(sel)
+            if not root:
+                continue
+            # Full price in one offscreen span inside a-price (most accurate on .in)
+            for off in root.select(".a-price:not(.a-text-price) .a-offscreen"):
+                txt = off.get_text(strip=True)
+                if not self._looks_like_price_offscreen(txt):
+                    continue
+                amt, cur = self._parse_price_line(txt)
+                if amt is not None and amt > 0:
+                    if cur == "USD" and default_cur == "INR" and "₹" in root.get_text(" ", strip=True):
+                        cur = "INR"
+                    elif cur == "USD" and default_cur != "USD":
+                        cur = default_cur
                     return amt, cur
-                except ValueError:
-                    pass
 
-        for sel in (
-            'span[data-a-color="price"] span.a-offscreen',
-            "span.a-price.a-text-price span.a-offscreen",
-            "span.a-offscreen",
-            "#corePrice_feature_div span.a-offscreen",
-            "#apex_desktop span.a-offscreen",
-            "#twister-plus-price-data-price span.a-offscreen",
-        ):
-            hidden = soup.select_one(sel)
-            if not hidden:
-                continue
-            txt = hidden.get_text(strip=True)
-            if not txt or len(txt) > 64:
-                continue
-            m_cur = re.search(r"([\d][\d.,]*)", txt)
-            if not m_cur:
-                continue
-            amt = self._parse_amount_string(m_cur.group(1))
-            if amt is None:
-                continue
-            cur = self._currency_from_price_text(txt)
-            return amt, cur
+            whole_nodes = root.select(".a-price:not(.a-text-price) .a-price-whole")
+            frac_nodes = root.select(".a-price:not(.a-text-price) .a-price-fraction")
+            if whole_nodes:
+                integral = "".join(ch for ch in whole_nodes[0].get_text() if ch.isdigit())
+                fr = frac_nodes[0].get_text(strip=True) if frac_nodes else ""
+                fr_digits = ("".join(ch for ch in fr if ch.isdigit()) + "00")[:2]
+                if integral:
+                    try:
+                        amt = float(f"{integral}.{fr_digits}")
+                        p = whole_nodes[0].find_parent(class_=re.compile("a-price"))
+                        parent_txt = p.get_text(" ", strip=True) if p else ""
+                        cur = self._currency_from_price_text(parent_txt or whole_nodes[0].get_text(" ", strip=True))
+                        if cur == "USD" and default_cur == "INR" and "₹" in root.get_text(" ", strip=True):
+                            cur = "INR"
+                        elif cur == "USD" and default_cur != "USD":
+                            cur = default_cur
+                        if amt > 0:
+                            return amt, cur
+                    except ValueError:
+                        pass
+        return None, ""
 
-        return None, "USD"
+    def _extract_price_currency(
+        self,
+        soup: BeautifulSoup,
+        html_snippet: str,
+        store_domain: Optional[str],
+    ) -> tuple[Optional[float], str, str]:
+        """Return (price, currency, source_tag) for telemetry."""
+        default_cur = self._default_currency_for_store(store_domain)
+
+        p, c = self._extract_price_from_json_ld(soup)
+        if p is not None and p > 0:
+            return p, c or default_cur, "json_ld"
+
+        p, c = self._extract_price_from_meta(soup)
+        if p is not None and p > 0:
+            return p, c or default_cur, "meta"
+
+        p, c = self._extract_price_from_embedded_json(html_snippet, store_domain)
+        if p is not None and p > 0:
+            return p, c or default_cur, "embedded_json"
+
+        p, c = self._extract_price_from_buybox(soup, default_cur)
+        if p is not None and p > 0:
+            if c == "USD" and default_cur == "INR":
+                dp = soup.select_one("#dp, #buybox")
+                if dp and "₹" in dp.get_text(" ", strip=True):
+                    c = "INR"
+            elif c == "USD" and default_cur != "USD":
+                c = default_cur
+            return p, c, "buybox_dom"
+
+        # Last resort: scope to main #dp column only (reduces picking carousel prices).
+        dp = soup.select_one("#dp, #dp-container, main#main")
+        search_roots = [dp] if dp else [soup]
+        for root in search_roots:
+            if root is None:
+                continue
+            for sel in (
+                ".a-price[data-a-color=\"price\"] .a-offscreen",
+                ".a-price:not(.a-text-price) .a-offscreen",
+            ):
+                for off in root.select(sel):
+                    txt = off.get_text(strip=True)
+                    if not self._looks_like_price_offscreen(txt):
+                        continue
+                    amt, cur = self._parse_price_line(txt)
+                    if amt is not None and amt > 0:
+                        if cur == "USD" and default_cur != "USD":
+                            cur = default_cur
+                        return amt, cur, "dp_scoped_offscreen"
+
+            whole_sels = root.select(".a-price:not(.a-text-price) .a-price-whole")
+            frac_sels = root.select(".a-price:not(.a-text-price) .a-price-fraction")
+            if whole_sels:
+                integral = "".join(ch for ch in whole_sels[0].get_text() if ch.isdigit())
+                fr = frac_sels[0].get_text(strip=True) if frac_sels else ""
+                fr_digits = ("".join(ch for ch in fr if ch.isdigit()) + "00")[:2]
+                if integral:
+                    try:
+                        amt = float(f"{integral}.{fr_digits}")
+                        p = whole_sels[0].find_parent(class_=re.compile("a-price"))
+                        parent_txt = p.get_text(" ", strip=True) if p else ""
+                        cur = self._currency_from_price_text(parent_txt or whole_sels[0].get_text(" ", strip=True))
+                        if cur == "USD" and default_cur != "USD":
+                            cur = default_cur
+                        if amt > 0:
+                            return amt, cur, "dp_scoped_whole"
+                    except ValueError:
+                        pass
+
+        return None, default_cur, "none"
 
     def _collect_detail_text(self, soup: BeautifulSoup) -> str:
         selectors = (
@@ -373,8 +636,11 @@ class ScraperApiScrapingProvider:
         patterns = [
             r"Best\s+Sellers\s+Rank[^\n#]*?#([\d,.]+(?:,\d{3})*)\s+(?:in|In)\s+([^\n(#<]{3,160})",
             r"Amazon\s+Best\s*Sellers\s+Rank[^\n#]*?#([\d,.]+(?:,\d{3})*)\s+(?:in|In)\s+([^\n(#<]{3,160})",
+            # amazon.in and other locales: looser digit groups (e.g. Indian grouping).
+            r"Best\s+Sellers\s+Rank[^\n#]*?#\s*([\d,]+)\s+(?:in|In)\s+([^\n(#<]{3,160})",
             r"Classement\s+des\s+meilleures\s+ventes[^\n#]*?n[°o]\s*([\d\s]+)\s+en\s+([^(\n<#]{3,160})",
             r"#([\d,.]+(?:,\d{3})*)\s+in\s+([A-Za-zÀ-ÿ0-9 &,'\-]{3,140})",
+            r"#\s*([\d,]+)\s+in\s+([A-Za-zÀ-ÿ0-9 &,'\-]{3,140})",
         ]
         for pat in patterns:
             m = re.search(pat, mega, re.I | re.S)
@@ -391,6 +657,95 @@ class ScraperApiScrapingProvider:
                 cat = cat.rstrip(" ,")[:512]
                 return rank, cat or None
         return None, None
+
+    _BREADCRUMB_SKIP = frozenset(
+        {
+            "amazon",
+            "amazon.com",
+            "amazon.in",
+            "home",
+            "shop",
+            "today's deals",
+            "todays deals",
+            "best sellers",
+            "gift cards",
+        }
+    )
+
+    def _jsonld_objects(self, data: Any) -> list[dict]:
+        out: list[dict] = []
+        if isinstance(data, dict):
+            graph = data.get("@graph")
+            if isinstance(graph, list):
+                for item in graph:
+                    if isinstance(item, dict):
+                        out.append(item)
+            else:
+                out.append(data)
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    out.append(item)
+        return out
+
+    def _extract_jsonld_product_category(self, soup: BeautifulSoup) -> Optional[str]:
+        for script in soup.select('script[type="application/ld+json"]'):
+            raw = (script.string or script.get_text() or "").strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            for obj in self._jsonld_objects(data):
+                types = obj.get("@type") or obj.get("type")
+                if isinstance(types, list):
+                    type_set = {str(t).lower() for t in types}
+                elif types:
+                    type_set = {str(types).lower()}
+                else:
+                    type_set = set()
+                if not type_set & {"product", "http://schema.org/product", "https://schema.org/product"}:
+                    continue
+                cat = obj.get("category") or obj.get("productCategory")
+                if isinstance(cat, str) and len(cat.strip()) > 2:
+                    return cat.strip()[:512]
+                if isinstance(cat, list) and cat:
+                    joined = " › ".join(str(c).strip() for c in cat if str(c).strip())
+                    if joined:
+                        return joined[:512]
+        return None
+
+    def _extract_browse_category(self, soup: BeautifulSoup) -> Optional[str]:
+        segments: list[str] = []
+        root = soup.select_one("#wayfinding-breadcrumbs_feature_div")
+        if not root:
+            root = soup.select_one("ul.a-unordered-list.a-horizontal.a-size-small")
+        if root:
+            for a in root.select("a.a-link-normal[href]"):
+                t = a.get_text(" ", strip=True)
+                if not t or len(t) < 2:
+                    continue
+                low = t.casefold().strip()
+                if low in self._BREADCRUMB_SKIP:
+                    continue
+                segments.append(t)
+        if len(segments) < 2:
+            nav = soup.select_one('nav[role="navigation"]')
+            if nav:
+                for a in nav.select("a[href*='node=']"):
+                    t = a.get_text(" ", strip=True)
+                    if not t or len(t) < 2:
+                        continue
+                    low = t.casefold().strip()
+                    if low in self._BREADCRUMB_SKIP:
+                        continue
+                    segments.append(t)
+        if len(segments) < 2:
+            return None
+        tail = segments[-4:]
+        joined = " › ".join(tail)
+        return joined[:512] if joined else None
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
         selectors = (
@@ -519,7 +874,14 @@ class ScraperApiScrapingProvider:
             return units, label
         return None, None
 
-    def _listing_from_soup(self, asin: str, soup: BeautifulSoup, canonical: str, raw_html_len: int) -> NormalizedListing:
+    def _listing_from_soup(
+        self,
+        asin: str,
+        soup: BeautifulSoup,
+        canonical: str,
+        raw_html_len: int,
+        store_domain: Optional[str] = None,
+    ) -> NormalizedListing:
         html_blob = soup.decode()
 
         title_raw = self._extract_title(soup)
@@ -528,9 +890,14 @@ class ScraperApiScrapingProvider:
         avg = self._extract_avg_rating(soup)
         review_count = self._extract_review_count(soup)
 
-        price, currency = self._extract_price_currency(soup)
+        price, currency, price_source = self._extract_price_currency(
+            soup, html_blob[:500_000], store_domain,
+        )
         bsr_rank, bsr_cat = self._extract_bsr(soup, html_blob[:200_000])
         prev_units, prev_label = self._extract_bought_past_month(soup)
+        browse_cat = self._extract_browse_category(soup)
+        jsonld_cat = self._extract_jsonld_product_category(soup)
+        product_category = browse_cat or jsonld_cat
 
         thin_parse = (not title_raw.strip()) or (price is None and bsr_rank is None)
 
@@ -556,6 +923,7 @@ class ScraperApiScrapingProvider:
             canonical_url=canonical,
             previous_month_units=prev_units,
             previous_month_label=prev_label,
+            product_category=product_category,
             raw={
                 "provider": "scraperapi",
                 "html_chars": raw_html_len,
@@ -565,6 +933,10 @@ class ScraperApiScrapingProvider:
                 "country_code": self.country_code,
                 "warnings": warnings,
                 "previous_month_label": prev_label,
+                "price_source": price_source,
+                "store_domain_hint": store_domain or "",
+                "browse_category": browse_cat,
+                "jsonld_category": jsonld_cat,
             },
         )
 
@@ -585,11 +957,16 @@ class ScraperApiScrapingProvider:
                 avg_rating=None,
                 review_count=None,
                 canonical_url=canonical,
+                previous_month_units=None,
+                previous_month_label=None,
+                product_category=None,
                 raw={"provider": "scraperapi", "error": "block_or_challenge", "html_sample": html[:500]},
             )
 
         soup = BeautifulSoup(html, "html.parser")
-        listing = self._listing_from_soup(asin.upper(), soup, canonical, len(html))
+        listing = self._listing_from_soup(
+            asin.upper(), soup, canonical, len(html), normalize_amazon_domain(amazon_domain),
+        )
 
         raw = dict(listing.raw) if isinstance(listing.raw, dict) else {}
         raw["amazon_domain_hint"] = normalize_amazon_domain(amazon_domain)

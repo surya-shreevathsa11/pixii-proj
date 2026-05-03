@@ -33,7 +33,19 @@ Create `backend/.env` if you do not have one yet. At minimum set the database UR
 DATABASE_URL=postgresql://pixii:pixii@localhost:5432/amazon_analytics
 ```
 
-Optional (competitive jobs): by default the API keeps only reviews that include **customer-uploaded photos**, up to `MAX_REVIEWS_PER_ASIN` (default 400). To ingest all text reviews again, set `REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false`.
+Optional review ingest:
+
+- **Market jobs**: when `REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=true` (default), only reviews flagged with customer photos are persisted, up to `MAX_REVIEWS_PER_ASIN` (default 400). Set `REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false` to keep all text reviews.
+- **Competitive jobs**: up to `COMPETITIVE_REVIEWS_PER_ASIN` (default 10) recent reviews per ASIN; rows with customer images are ranked ahead of text-only rows, but text reviews still fill the cap. `COMPETITIVE_REVIEW_FETCH_BUFFER` (default 40) controls how many recent rows are fetched before sorting and trimming.
+
+On startup, `database.py` applies idempotent patches for newer columns (e.g. `listing.product_category`, `review.has_customer_images`, `summary.why_buyers_like`, `summary.why_buyers_caution`). For manual SQL on older Postgres installs:
+
+```sql
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS product_category VARCHAR(512);
+ALTER TABLE review ADD COLUMN IF NOT EXISTS has_customer_images BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE summary ADD COLUMN IF NOT EXISTS why_buyers_like TEXT;
+ALTER TABLE summary ADD COLUMN IF NOT EXISTS why_buyers_caution TEXT;
+```
 
 If you already have a `job` table from an older install, add the auto-discover column once (skip if the column already exists):
 
@@ -83,11 +95,15 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-By default the UI calls the API at `http://127.0.0.1:8000`. To override, set in `frontend/.env.local`:
+By default the browser talks to the **same origin** only (`/api/...` on the Next dev server). Next.js **rewrites** those requests to FastAPI at `http://127.0.0.1:8000`, which avoids CORS and fixes `NetworkError when attempting to fetch resource` when the UI is opened as `localhost` while the old client pointed at `127.0.0.1`, or when using another port / LAN IP.
+
+If FastAPI is not on port 8000, set in `frontend/.env.local` and restart `npm run dev`:
 
 ```env
-NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000
+API_PROXY_TARGET=http://127.0.0.1:8000
 ```
+
+Only set `NEXT_PUBLIC_API_BASE` when the UI and API are on different hosts in production and you have CORS configured—leave it unset for local dev so the proxy is used.
 
 ### 4. Typical order
 

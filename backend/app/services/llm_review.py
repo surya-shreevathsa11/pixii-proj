@@ -1,7 +1,8 @@
 import asyncio
 import json
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import google.generativeai as genai
 
@@ -141,6 +142,100 @@ Rules:
         return await asyncio.to_thread(_invoke)
     except Exception:
         return build_stub_map(product_title)
+
+
+@dataclass
+class CompetitiveReviewSynthesis:
+    final_summary: str
+    key_purchase_criteria: list[str]
+    why_buyers_like: Optional[str]
+    why_buyers_caution: Optional[str]
+
+
+async def synthesize_reviews_single_pass(
+    asin: str, product_title: str, review_lines: list[str],
+) -> CompetitiveReviewSynthesis:
+    """One Gemini call for a small corpus (competitive jobs, ≤10 reviews)."""
+    model = _get_gemini_model()
+    blob = "\n".join(review_lines[:32])[:64000]
+
+    prompt = f"""You are synthesizing Amazon customer reviews for merchandising.
+
+ASIN: {asin}
+Product title: {product_title[:400]}
+
+Reviews (rating-prefixed lines):
+{blob}
+
+Return strict JSON ONLY (no markdown) with keys:
+- final_summary: string (about 900-1800 characters) on motivators, friction, and how this compares to typical expectations in the category.
+- why_buyers_like: string (400-1200 characters) on positive patterns buyers repeat.
+- why_buyers_caution: string (400-1200 characters) on recurring complaints, risks, or disappointment themes.
+- key_purchase_criteria: array of 5-10 short PDP bullets the listing should address.
+
+Ground every theme in the provided review lines; do not invent specs not hinted at in the text.
+"""
+
+    if not model:
+        return CompetitiveReviewSynthesis(
+            final_summary=(
+                "Gemini unavailable; set GOOGLE_API_KEY for single-pass review synthesis. "
+                f"Captured {len(review_lines)} review snippets for {asin}."
+            ),
+            key_purchase_criteria=[
+                "Value vs alternatives",
+                "Quality consistency",
+                "Packaging / arrival condition",
+                "Support / returns experience",
+            ],
+            why_buyers_like=None,
+            why_buyers_caution=None,
+        )
+
+    def _invoke() -> CompetitiveReviewSynthesis:
+        rsp = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.25,
+                "max_output_tokens": 4096,
+            },
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            ],
+        )
+        raw_txt = _response_text(rsp)
+        try:
+            data = extract_json_blob(raw_txt or "{}")
+        except json.JSONDecodeError:
+            return CompetitiveReviewSynthesis(
+                final_summary=(raw_txt or "Unparseable Gemini response.")[:65000],
+                key_purchase_criteria=[],
+                why_buyers_like=None,
+                why_buyers_caution=None,
+            )
+        summary = str(data.get("final_summary") or "").strip()
+        like = str(data.get("why_buyers_like") or "").strip() or None
+        caution = str(data.get("why_buyers_caution") or "").strip() or None
+        kp = [str(x).strip() for x in (data.get("key_purchase_criteria") or []) if str(x).strip()]
+        if not summary:
+            summary = (raw_txt or "")[:65000]
+        return CompetitiveReviewSynthesis(
+            final_summary=summary,
+            key_purchase_criteria=kp[:14],
+            why_buyers_like=like,
+            why_buyers_caution=caution,
+        )
+
+    try:
+        return await asyncio.to_thread(_invoke)
+    except Exception:
+        return CompetitiveReviewSynthesis(
+            final_summary=f"Synthesis failed safely for {asin}; inspect logs and retry.",
+            key_purchase_criteria=["Trust cues", "Spec clarity", "Fulfillment consistency"],
+            why_buyers_like=None,
+            why_buyers_caution=None,
+        )
 
 
 def build_stub_map(title: str) -> dict[str, Any]:

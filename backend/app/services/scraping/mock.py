@@ -25,6 +25,7 @@ class MockScrapingProvider:
             canonical_url=f"https://www.{amazon_domain}/dp/{asin.upper()}",
             previous_month_units=prev_units,
             previous_month_label=f"{prev_units}+ bought in past month" if prev_units else None,
+            product_category="Home & Kitchen › Storage › Demo browse path",
             raw={"demo": True, "asin": asin.upper(), "previous_month_label": f"{prev_units}+ bought in past month" if prev_units else None},
         )
 
