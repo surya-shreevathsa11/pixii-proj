@@ -250,11 +250,13 @@ class ScraperApiScrapingProvider:
 
         rsp: httpx.Response | None = None
         last_net_exc: BaseException | None = None
+        # ScraperAPI returns 499 when the upstream scrape failed (e.g. blocked / proxy churn) and 5xx for
+        # internal errors. Both are transient; retry the GET a few times before giving up.
+        TRANSIENT_STATUSES = {429, 499, 500, 502, 503, 504, 520, 522, 524}
         for attempt in range(3):
             try:
                 async with httpx.AsyncClient(timeout=httpx_timeout, follow_redirects=True) as client:
                     rsp = await client.get(self.BASE, params=query_pairs)
-                break
             except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
                 last_net_exc = exc
                 logger.warning(
@@ -277,10 +279,26 @@ class ScraperApiScrapingProvider:
                 )
                 return canonical, "", 504
 
+            # Got a response; retry transient upstream failures (ScraperAPI's 499 + 5xx) before bailing.
+            if rsp.status_code in TRANSIENT_STATUSES and attempt < 2:
+                logger.warning(
+                    "ScraperAPI transient %s (attempt %s/3, render=%s) for %s; retrying.",
+                    rsp.status_code, attempt + 1, uses_render, canonical[:120],
+                )
+                await asyncio.sleep(2.0 * (attempt + 1))
+                continue
+            break
+
         assert rsp is not None
 
-        if raise_on_error:
-            rsp.raise_for_status()
+        if raise_on_error and rsp.status_code >= 400:
+            # Surface a structured error but never propagate raw HTTPStatusError to the job runner;
+            # callers handle (canonical, "", status) and decide whether to abort or fall back.
+            logger.warning(
+                "ScraperAPI %s for %s (render=%s); returning empty body to caller.",
+                rsp.status_code, canonical[:160], uses_render,
+            )
+            return canonical, "", rsp.status_code
 
         ctype = rsp.headers.get("content-type") or ""
 

@@ -412,26 +412,39 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     job.phase = "Discovering similar ASINs"
                     persist_job_touch(session, job)
                     pool_lim = max(9, settings.competitive_discovery_pool_limit)
-                    extras = await provider.discover_competitor_asins(
-                        primary,
-                        amazon_domain,
-                        9,
-                        candidate_pool_limit=pool_lim,
-                    )
-                    if not extras:
-                        raise ValueError(
-                            "Auto-discover found no related ASINs on the product page. "
-                            "Try SCRAPERAPI_RENDER=true, paste competitor URLs manually, or send auto_discover_competitors=false."
+                    extras: list[str] = []
+                    try:
+                        extras = await provider.discover_competitor_asins(
+                            primary,
+                            amazon_domain,
+                            9,
+                            candidate_pool_limit=pool_lim,
                         )
-                    merged: list[str] = []
-                    max_asins = 1 + pool_lim
-                    for a in [primary, *extras]:
-                        ua = a.upper()
-                        if ua not in merged:
-                            merged.append(ua)
-                        if len(merged) >= max_asins:
-                            break
-                    target_asins = merged
+                    except Exception as exc:
+                        # ScraperAPI 499 / 5xx / network blip: degrade gracefully to primary-only analysis
+                        # instead of crashing the whole job. The user still gets listings + reviews + summary.
+                        logger.warning(
+                            "Auto-discover failed for %s on %s (%s); falling back to primary-only competitive run.",
+                            primary, amazon_domain, exc,
+                        )
+                        extras = []
+
+                    if extras:
+                        merged: list[str] = []
+                        max_asins = 1 + pool_lim
+                        for a in [primary, *extras]:
+                            ua = a.upper()
+                            if ua not in merged:
+                                merged.append(ua)
+                            if len(merged) >= max_asins:
+                                break
+                        target_asins = merged
+                    else:
+                        # Keep the primary so downstream phases still produce useful output.
+                        job.error_message = (
+                            "Auto-discover returned no peers (ScraperAPI block / proxy issue likely). "
+                            "Continuing with primary ASIN only; rerun later or paste competitor URLs manually."
+                        )
                     job.asins = target_asins
                     persist_job_touch(session, job)
 
