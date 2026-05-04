@@ -1,22 +1,19 @@
 import logging
 import uuid
 from collections import defaultdict
-from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.config import settings
 from app.database import get_session
-from app.models import Job, JobFlow, JobStatus, Listing, PriceHistory, Review, Summary
+from app.models import Job, JobFlow, JobStatus, Listing, Review, Summary
 from app.schemas import (
     CompetitiveJobCreate,
     JobCreateResponse,
     JobDetailResponse,
     ListingOut,
     MarketJobCreate,
-    PriceHistoryOut,
-    PricePoint,
     ReviewOut,
     SummaryOut,
 )
@@ -167,8 +164,6 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
     ingest_demo = _ingest_demo_from_listings(list(listings_rows))
     gemini_configured = bool(settings.google_api_key.strip())
 
-    price_history_out = _price_history_for_job(session, job)
-
     return JobDetailResponse(
         id=job.id,
         flow=job.flow,
@@ -185,71 +180,10 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         summaries=sorted(summaries_out, key=lambda sm: sm.asin),
         reviews=reviews_out,
         reviews_count_total=len(reviews_total),
-        price_history=price_history_out,
         created_at=job.created_at,
         ingest_demo=ingest_demo,
         gemini_configured=gemini_configured,
     )
-
-
-def _price_history_for_job(session: Session, job: Job) -> PriceHistoryOut | None:
-    """Return the stored 90-day series for the job's primary ASIN, or None when missing/competitive-only."""
-    try:
-        if job.flow != JobFlow.competitive:
-            return None
-        asins = list(job.asins or [])
-        if not asins:
-            return None
-        primary = asins[0].upper()
-        row = session.exec(
-            select(PriceHistory)
-            .where(PriceHistory.job_id == job.id)
-            .where(PriceHistory.asin == primary)
-        ).first()
-        if row is None or not row.points:
-            return None
-
-        points: list[PricePoint] = []
-        for entry in row.points:
-            if not isinstance(entry, dict):
-                continue
-            d = entry.get("d") or entry.get("date")
-            if not isinstance(d, str):
-                continue
-            raw_p = entry.get("p") if "p" in entry else entry.get("price")
-            if isinstance(raw_p, Decimal):
-                p = float(raw_p)
-            elif isinstance(raw_p, bool):
-                continue
-            elif isinstance(raw_p, (int, float)):
-                p = float(raw_p)
-            elif isinstance(raw_p, str):
-                try:
-                    p = float(raw_p.replace(",", "").strip())
-                except ValueError:
-                    continue
-            else:
-                continue
-            if p <= 0 or p != p:  # NaN check
-                continue
-            try:
-                points.append(PricePoint(date=d, price=p))
-            except (TypeError, ValueError):
-                continue
-
-        if len(points) < 2:
-            return None
-
-        return PriceHistoryOut(
-            asin=row.asin,
-            currency=row.currency or "",
-            points=points,
-            source=row.source or "",
-            captured_at=row.captured_at,
-        )
-    except Exception as exc:
-        logger.warning("price_history omitted for job %s: %s", job.id, exc)
-        return None
 
 
 @router.post("/jobs/competitive", response_model=JobCreateResponse)

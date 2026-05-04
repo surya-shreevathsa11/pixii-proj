@@ -135,48 +135,6 @@ def _apply_schema_patches() -> None:
                     conn.execute(text("ALTER TABLE summary ADD COLUMN why_buyers_caution TEXT"))
                 logger.info("Applied schema patch: summary.why_buyers_caution")
 
-        # New table for Apify-backed price history (older DBs never ran create_all after this model existed).
-        if not _table_exists(conn, "price_history"):
-            if dialect == "postgresql":
-                conn.execute(
-                    text(
-                        """
-                        CREATE TABLE price_history (
-                            id UUID NOT NULL PRIMARY KEY,
-                            job_id UUID NOT NULL,
-                            asin VARCHAR(32) NOT NULL,
-                            currency VARCHAR(8) NOT NULL DEFAULT '',
-                            points JSON NOT NULL,
-                            source VARCHAR(128) NOT NULL DEFAULT '',
-                            captured_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-                            CONSTRAINT fk_price_history_job_id FOREIGN KEY (job_id) REFERENCES job(id)
-                        )
-                        """
-                    )
-                )
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_history_job_id ON price_history (job_id)"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_history_asin ON price_history (asin)"))
-            else:
-                conn.execute(
-                    text(
-                        """
-                        CREATE TABLE price_history (
-                            id VARCHAR(36) NOT NULL PRIMARY KEY,
-                            job_id VARCHAR(36) NOT NULL,
-                            asin VARCHAR(32) NOT NULL,
-                            currency VARCHAR(8) NOT NULL DEFAULT '',
-                            points TEXT NOT NULL,
-                            source VARCHAR(128) NOT NULL DEFAULT '',
-                            captured_at TIMESTAMP NOT NULL,
-                            FOREIGN KEY(job_id) REFERENCES job(id)
-                        )
-                        """
-                    )
-                )
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_history_job_id ON price_history (job_id)"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_price_history_asin ON price_history (asin)"))
-            logger.info("Applied schema patch: price_history table")
-
 
 def init_db() -> None:
     # Ensure every SQLModel table is registered on metadata before create_all (import-order safe).

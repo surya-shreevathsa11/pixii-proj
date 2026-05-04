@@ -75,23 +75,6 @@ class ReviewOut(BaseModel):
     verified: bool = False
 
 
-class PricePoint(BaseModel):
-    """One day in the 90-day price history series."""
-
-    date: str  # YYYY-MM-DD
-    price: float
-
-
-class PriceHistoryOut(BaseModel):
-    """Persisted Apify-derived price series for the primary ASIN of a competitive job."""
-
-    asin: str
-    currency: str = ""
-    points: list[PricePoint] = Field(default_factory=list)
-    source: str = ""
-    captured_at: datetime
-
-
 class JobDetailResponse(BaseModel):
     id: uuid.UUID
     flow: JobFlow
@@ -109,9 +92,6 @@ class JobDetailResponse(BaseModel):
     summaries: list[SummaryOut]
     reviews: list[ReviewOut] = Field(default_factory=list)
     reviews_count_total: int
-    # 90-day price history for the primary ASIN; populated only on competitive jobs when
-    # APIFY_API_TOKEN + APIFY_PRICE_HISTORY_ACTOR are configured. Null otherwise.
-    price_history: Optional[PriceHistoryOut] = None
     created_at: datetime
     ingest_demo: bool = False
     gemini_configured: bool = False

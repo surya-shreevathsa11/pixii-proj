@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from "react";
 import { AppPageHeader } from "@/components/AppPageHeader";
 import { RecentAnalyses } from "@/components/RecentAnalyses";
 import { Disclaimer } from "@/components/Disclaimer";
-import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { fetchJob } from "@/lib/api";
 import type { JobDetailResponse } from "@/lib/types";
 import { formatStorefrontMoney, localeForAmazonDomain } from "@/lib/storefrontLocale";
@@ -376,53 +375,9 @@ export default function JobInsightPage() {
         </section>
       ) : null}
 
-      {job && job.flow === "competitive" && job.price_history && job.price_history.points.length >= 2 ? (
-        <section
-          id="price-history"
-          className="scroll-mt-24 rounded-xl border border-zinc-100 bg-white p-6 shadow-sm"
-        >
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">90-day price history</h2>
-              <p className="text-sm text-zinc-500">
-                Daily list price for your primary listing
-                {(() => {
-                  const primaryAsin = job.asins[0];
-                  const primary = job.listings.find((l) => l.asin === primaryAsin) ?? job.listings[0];
-                  const t = (primary?.title || "").trim();
-                  return t ? ` (${t.length > 80 ? `${t.slice(0, 79)}\u2026` : t})` : "";
-                })()}
-                . Sourced from Apify; competitor lines are intentionally excluded so trend is easy to read.
-              </p>
-            </div>
-            <span className="text-xs text-zinc-500">
-              ASIN <span className="font-mono">{job.price_history.asin}</span>
-            </span>
-          </div>
-          <div className="mt-4">
-            <PriceHistoryChart
-              points={job.price_history.points}
-              currency={
-                job.price_history.currency ||
-                (job.listings.find((l) => l.asin === job.asins[0])?.currency ?? "USD")
-              }
-              asin={job.price_history.asin}
-            />
-          </div>
-        </section>
-      ) : null}
-
       {job && job.flow === "competitive" ? (
         <nav className="flex flex-wrap items-center gap-3 text-sm text-zinc-600" aria-label="On-page sections">
           <span className="font-medium text-zinc-900">Jump to:</span>
-          {job.price_history && job.price_history.points.length >= 2 ? (
-            <>
-              <a href="#price-history" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
-                Price history
-              </a>
-              <span className="text-zinc-300">·</span>
-            </>
-          ) : null}
           <a href="#leaderboard" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
             Revenue leaderboard
           </a>

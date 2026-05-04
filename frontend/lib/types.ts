@@ -41,20 +41,6 @@ export interface ReviewOut {
   verified: boolean;
 }
 
-export interface PricePoint {
-  /** ISO date (YYYY-MM-DD). */
-  date: string;
-  price: number;
-}
-
-export interface PriceHistoryOut {
-  asin: string;
-  currency: string;
-  points: PricePoint[];
-  source: string;
-  captured_at: string;
-}
-
 export interface JobDetailResponse {
   id: string;
   flow: JobFlow;
@@ -72,8 +58,6 @@ export interface JobDetailResponse {
   summaries: SummaryOut[];
   reviews?: ReviewOut[];
   reviews_count_total: number;
-  /** 90-day price history for the primary ASIN; populated only on competitive jobs when Apify is configured. */
-  price_history?: PriceHistoryOut | null;
   created_at: string;
   ingest_demo: boolean;
   gemini_configured: boolean;
