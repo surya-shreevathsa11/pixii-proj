@@ -298,6 +298,12 @@ async def _ingest_reviews_competitive(
     return persisted
 
 
+def _review_row_has_meaningful_text(r: Review) -> bool:
+    """True when title or body has enough characters for Gemini to quote themes."""
+    text = f"{(r.title or '').strip()} {(r.body or '').strip()}".strip()
+    return len(text) >= 12
+
+
 async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     if session.exec(
         select(Summary).where(Summary.job_id == job.id).where(Summary.asin == asin)
@@ -344,7 +350,8 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
         lines: list[str] = []
         for r in reviews_rows:
             rr = r.rating if r.rating is not None else "?"
-            safe = (r.body or "").replace("\n", " ").strip()
+            raw = f"{(r.title or '').strip()} {(r.body or '').strip()}".strip()
+            safe = raw.replace("\n", " ").strip()
             lines.append(f"Rating {rr}: {safe}")
         synth = await synthesize_reviews_single_pass(asin, product_title or "", lines)
         summary_row = Summary(
@@ -359,6 +366,24 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     else:
         bodies = [r.body or "" for r in reviews_rows]
         ratings = [r.rating for r in reviews_rows]
+        if not any(_review_row_has_meaningful_text(r) for r in reviews_rows):
+            stub = Summary(
+                job_id=job.id,
+                asin=asin,
+                map_batches=[],
+                final_summary=(
+                    f"Synced {len(reviews_rows)} review row(s) for {asin}, but none contained usable text "
+                    "(empty titles and bodies—often a scrape or render issue). Skipped Gemini to save quota. "
+                    "Try SCRAPERAPI_RENDER=true and re-run."
+                ),
+                key_purchase_criteria=[
+                    "Re-run after fixing review-text capture; KPC needs actual shopper sentences.",
+                ],
+            )
+            session.add(stub)
+            session.commit()
+            return
+
         batches_txt = format_review_batches(bodies, ratings, settings.review_batch_map_size)
 
         map_batches: list[dict] = []
@@ -749,9 +774,15 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 job.phase = "LLM aggregation"
                 persist_job_touch(session, job)
 
+                # Space Gemini calls so free-tier per-minute quotas are less likely to trip when
+                # summarizing many ASINs back-to-back (ResourceExhausted).
+                _GEMINI_INTER_ASIN_DELAY_S = 4.5
+
                 for sidx, asin in enumerate(target_asins, start=1):
                     job.phase = f"Summarizing reviews ({sidx}/{total or 1})"
                     persist_job_touch(session, job)
+                    if sidx > 1 and settings.google_api_key.strip():
+                        await asyncio.sleep(_GEMINI_INTER_ASIN_DELAY_S)
                     await summarize_asin(job, asin, session)
 
             job.phase = "Done"

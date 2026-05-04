@@ -181,19 +181,51 @@ class CompetitiveReviewSynthesis:
     why_buyers_caution: Optional[str]
 
 
+def _single_pass_corpus_has_text(review_lines: list[str]) -> bool:
+    """True when at least one line has substantive text after the ``Rating N:`` prefix."""
+    for line in review_lines:
+        if ":" not in line:
+            continue
+        rest = line.split(":", 1)[-1].strip()
+        if len(rest) >= 12:
+            return True
+    return False
+
+
 async def synthesize_reviews_single_pass(
     asin: str, product_title: str, review_lines: list[str],
 ) -> CompetitiveReviewSynthesis:
     """One Gemini call for a small corpus (competitive jobs, ≤10 reviews)."""
     model = _get_gemini_model()
-    blob = "\n".join(review_lines[:32])[:64000]
+    # Star-only rows (Amazon returned ratings but empty bodies) must not hit Gemini: it burns
+    # quota and often returns long non-JSON essays about "absence of data" instead of useful KPC.
+    if not _single_pass_corpus_has_text(review_lines):
+        n = len(review_lines)
+        return CompetitiveReviewSynthesis(
+            final_summary=(
+                f"No usable review text was captured for {asin} ({n} rating row(s) with empty titles/bodies). "
+                "Key purchase criteria cannot be grounded in shopper language. "
+                "Try SCRAPERAPI_RENDER=true, re-run the job, or check that reviews are visible on the live PDP."
+            ),
+            key_purchase_criteria=[
+                "Re-run with reliable review-text scraping—criteria need quoted shopper feedback.",
+            ],
+            why_buyers_like=(
+                f"Ratings were synced but not review prose ({n} row(s)). "
+                "Positive star counts alone do not reveal which product attributes buyers value."
+            ),
+            why_buyers_caution=None,
+        )
+
+    filtered = [ln for ln in review_lines[:32] if _single_pass_corpus_has_text([ln])]
+    blob = "\n".join(filtered)[:64000]
 
     prompt = f"""You are synthesizing Amazon customer reviews for merchandising.
 
 ASIN: {asin}
 Product title: {product_title[:400]}
 
-Reviews (rating-prefixed lines):
+Reviews (rating-prefixed lines; empty lines omitted):
 {blob}
 
 Return strict JSON ONLY (no markdown) with keys:
@@ -252,11 +284,12 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
         )
 
     last_exc: Exception | None = None
-    # Up to 3 attempts total. Quota errors get longer backoffs (8s, 24s) so the per-minute
-    # token bucket has a chance to refill; other transient errors retry quickly (1.5s, 4s).
-    quota_backoffs = [8.0, 24.0]
-    transient_backoffs = [1.5, 4.0]
-    for attempt in range(3):
+    # Up to 4 attempts. Quota / ResourceExhausted gets longer backoffs so the free-tier
+    # per-minute bucket can refill; competitive jobs fire one call per ASIN in a tight loop,
+    # so callers also stagger between ASINs.
+    quota_backoffs = [12.0, 35.0, 55.0]
+    transient_backoffs = [2.0, 5.0, 10.0]
+    for attempt in range(4):
         try:
             return await asyncio.to_thread(_invoke)
         except Exception as exc:
@@ -272,8 +305,9 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
                 type(exc).__name__,
                 exc,
             )
-            if attempt < 2 and transient:
-                delay = quota_backoffs[attempt] if quota else transient_backoffs[attempt]
+            if attempt < 3 and transient:
+                idx = min(attempt, len(quota_backoffs) - 1)
+                delay = quota_backoffs[idx] if quota else transient_backoffs[idx]
                 await asyncio.sleep(delay)
                 continue
             break
