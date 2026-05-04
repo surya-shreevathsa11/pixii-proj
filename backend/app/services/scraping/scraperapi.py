@@ -1353,12 +1353,23 @@ class ScraperApiScrapingProvider:
         logger.info("SERP competitor discovery k=%r returned %d ASINs", q[:96], len(rows))
         return rows
 
-    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
+    async def discover_competitor_asins(
+        self,
+        asin: str,
+        amazon_domain: str,
+        limit: int,
+        *,
+        candidate_pool_limit: int | None = None,
+    ) -> list[str]:
         """Collect related ASINs from PDP widgets plus a category SERP pass for cross-brand peers.
 
         Amazon's similar-item carousels often skew to the same manufacturer. We merge those
         candidates with storefront search results derived from breadcrumbs / product type,
         then rank other-brand tiles ahead of same-brand so competitive sets include rivals.
+
+        ``limit`` controls ranking depth; ``candidate_pool_limit`` (when set) expands how many
+        ASINs are returned so callers can filter (category, price band, variants) and still keep
+        nine distinct competitors.
         """
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
@@ -1372,7 +1383,8 @@ class ScraperApiScrapingProvider:
         primary_title = self._extract_title(soup)
         pairs: list[tuple[str, str]] = []
         seen: set[str] = {primary}
-        gather_cap = max(limit * 6, limit + 12)
+        pool_requested = max(limit, candidate_pool_limit) if candidate_pool_limit is not None else limit
+        gather_cap = max(pool_requested * 6, pool_requested + 12, 66)
 
         def try_add(cand: str, hint: str) -> None:
             if cand in seen or len(pairs) >= gather_cap:
@@ -1432,12 +1444,13 @@ class ScraperApiScrapingProvider:
 
         kw = self._serp_keywords_for_cross_shop(soup, primary_title)
         if kw and len(pairs) < gather_cap:
-            for a, h in await self._discover_serp_asin_hints(kw, amazon_domain, cap=min(28, gather_cap)):
+            serp_cap = min(max(28, pool_requested + 8), gather_cap)
+            for a, h in await self._discover_serp_asin_hints(kw, amazon_domain, cap=serp_cap):
                 try_add(a, h)
 
         brand = self._leading_brand_token(primary_title)
         ordered = self._order_cross_brand_first(pairs, brand)
-        return [a for a, _ in ordered[:limit]]
+        return [a for a, _ in ordered[:pool_requested]]
 
     async def fetch_best_seller_asins(self, bestsellers_page_url: str, amazon_domain: str, limit: int) -> list[str]:
         domain_hint = normalize_amazon_domain(amazon_domain)

@@ -46,4 +46,11 @@ class ScrapingProvider(Protocol):
         page_token: Optional[str],
     ) -> tuple[list[NormalizedReview], Optional[str]]: ...
 
-    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]: ...
+    async def discover_competitor_asins(
+        self,
+        asin: str,
+        amazon_domain: str,
+        limit: int,
+        *,
+        candidate_pool_limit: int | None = None,
+    ) -> list[str]: ...

@@ -406,18 +406,25 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     primary = target_asins[0]
                     job.phase = "Discovering similar ASINs"
                     persist_job_touch(session, job)
-                    extras = await provider.discover_competitor_asins(primary, amazon_domain, 9)
+                    pool_lim = max(9, settings.competitive_discovery_pool_limit)
+                    extras = await provider.discover_competitor_asins(
+                        primary,
+                        amazon_domain,
+                        9,
+                        candidate_pool_limit=pool_lim,
+                    )
                     if not extras:
                         raise ValueError(
                             "Auto-discover found no related ASINs on the product page. "
                             "Try SCRAPERAPI_RENDER=true, paste competitor URLs manually, or send auto_discover_competitors=false."
                         )
                     merged: list[str] = []
+                    max_asins = 1 + pool_lim
                     for a in [primary, *extras]:
                         ua = a.upper()
                         if ua not in merged:
                             merged.append(ua)
-                        if len(merged) >= 10:
+                        if len(merged) >= max_asins:
                             break
                     target_asins = merged
                     job.asins = target_asins
@@ -541,7 +548,9 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     return abs(math.log(comp_inr / primary_inr))
 
                 price_filtered.sort(key=_price_distance)
-                staged = [primary_pair, *price_filtered][: max(1, len(target_asins))]
+                # Cap at ten ASINs (primary + nine competitors). Pool may be larger so filters can refill peers.
+                slice_cap = min(10, max(1, len(target_asins)))
+                staged = [primary_pair, *price_filtered][:slice_cap]
 
             # Pass 3: persist Listing rows for the survivors and clean up any orphaned rows
             # (e.g. from a previous re-run that had different competitors).
@@ -634,6 +643,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 persist_job_touch(session, job)
 
             if job.flow == JobFlow.competitive:
+                total = len(target_asins)
                 job.phase = "Review ingestion"
                 persist_job_touch(session, job)
 

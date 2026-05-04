@@ -47,13 +47,21 @@ class MockScrapingProvider:
 
         return out
 
-    async def discover_competitor_asins(self, asin: str, amazon_domain: str, limit: int) -> list[str]:
+    async def discover_competitor_asins(
+        self,
+        asin: str,
+        amazon_domain: str,
+        limit: int,
+        *,
+        candidate_pool_limit: int | None = None,
+    ) -> list[str]:
         base = asin.upper().encode() + b"|rivals|" + amazon_domain.encode()
+        want = max(limit, candidate_pool_limit) if candidate_pool_limit is not None else limit
         out: list[str] = []
         seen: set[str] = {asin.upper()}
         i = 0
         alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-        while len(out) < limit:
+        while len(out) < want:
             digest = hashlib.sha256(base + str(i).encode()).hexdigest()
             suffix = "".join(alphabet[int(digest[j : j + 2], 16) % len(alphabet)] for j in range(0, 16, 2))[:9]
             a = ("B0" + suffix)[:10]

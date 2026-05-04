@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     competitive_reviews_per_asin: int = 10
     # Extra rows to fetch before sorting (image preference) and trimming to competitive_reviews_per_asin.
     competitive_review_fetch_buffer: int = 40
+    # Auto-discover: fetch this many candidate competitor ASINs (before category/price/variant filters) so we can
+    # still end up with nine distinct peers when many tiles are same-brand, variants, or off-category.
+    competitive_discovery_pool_limit: int = 42
     review_batch_map_size: int = 100
     # When True, market-style jobs still skip reviews without customer photos. Competitive flow ignores this
     # for filtering and only uses it as a soft preference in ranking.
