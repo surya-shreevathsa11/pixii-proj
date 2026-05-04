@@ -1,5 +1,7 @@
+import logging
 import uuid
 from collections import defaultdict
+from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, select
@@ -26,6 +28,7 @@ from app.services.scraping.util import (
 )
 
 router = APIRouter(tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 _REVIEW_BODY_LEGACY_PREFIX = "[Customer photos in review]"
 
@@ -191,43 +194,62 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
 
 def _price_history_for_job(session: Session, job: Job) -> PriceHistoryOut | None:
     """Return the stored 90-day series for the job's primary ASIN, or None when missing/competitive-only."""
-    if job.flow != JobFlow.competitive:
-        return None
-    asins = list(job.asins or [])
-    if not asins:
-        return None
-    primary = asins[0].upper()
-    row = session.exec(
-        select(PriceHistory)
-        .where(PriceHistory.job_id == job.id)
-        .where(PriceHistory.asin == primary)
-    ).first()
-    if row is None or not row.points:
-        return None
+    try:
+        if job.flow != JobFlow.competitive:
+            return None
+        asins = list(job.asins or [])
+        if not asins:
+            return None
+        primary = asins[0].upper()
+        row = session.exec(
+            select(PriceHistory)
+            .where(PriceHistory.job_id == job.id)
+            .where(PriceHistory.asin == primary)
+        ).first()
+        if row is None or not row.points:
+            return None
 
-    points: list[PricePoint] = []
-    for entry in row.points:
-        if not isinstance(entry, dict):
-            continue
-        d = entry.get("d") or entry.get("date")
-        p = entry.get("p") if "p" in entry else entry.get("price")
-        if not isinstance(d, str) or not isinstance(p, (int, float)):
-            continue
-        try:
-            points.append(PricePoint(date=d, price=float(p)))
-        except (TypeError, ValueError):
-            continue
+        points: list[PricePoint] = []
+        for entry in row.points:
+            if not isinstance(entry, dict):
+                continue
+            d = entry.get("d") or entry.get("date")
+            if not isinstance(d, str):
+                continue
+            raw_p = entry.get("p") if "p" in entry else entry.get("price")
+            if isinstance(raw_p, Decimal):
+                p = float(raw_p)
+            elif isinstance(raw_p, bool):
+                continue
+            elif isinstance(raw_p, (int, float)):
+                p = float(raw_p)
+            elif isinstance(raw_p, str):
+                try:
+                    p = float(raw_p.replace(",", "").strip())
+                except ValueError:
+                    continue
+            else:
+                continue
+            if p <= 0 or p != p:  # NaN check
+                continue
+            try:
+                points.append(PricePoint(date=d, price=p))
+            except (TypeError, ValueError):
+                continue
 
-    if len(points) < 2:
+        if len(points) < 2:
+            return None
+
+        return PriceHistoryOut(
+            asin=row.asin,
+            currency=row.currency or "",
+            points=points,
+            source=row.source or "",
+            captured_at=row.captured_at,
+        )
+    except Exception as exc:
+        logger.warning("price_history omitted for job %s: %s", job.id, exc)
         return None
-
-    return PriceHistoryOut(
-        asin=row.asin,
-        currency=row.currency or "",
-        points=points,
-        source=row.source or "",
-        captured_at=row.captured_at,
-    )
 
 
 @router.post("/jobs/competitive", response_model=JobCreateResponse)
