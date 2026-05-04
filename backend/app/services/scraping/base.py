@@ -1,5 +1,8 @@
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
+
+if TYPE_CHECKING:
+    from app.services.comparison_spec import ComparisonSpec
 
 
 @dataclass
@@ -53,4 +56,5 @@ class ScrapingProvider(Protocol):
         limit: int,
         *,
         candidate_pool_limit: int | None = None,
+        spec: Optional["ComparisonSpec"] = None,
     ) -> list[str]: ...

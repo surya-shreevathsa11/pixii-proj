@@ -1170,11 +1170,43 @@ class ScraperApiScrapingProvider:
             },
         )
 
+    @staticmethod
+    def _is_thin_pdp_html(html: str) -> bool:
+        """Quick test: does this HTML look like a real Amazon PDP we can scrape?
+
+        A 4xx response, an empty body, or a stub that has none of the canonical PDP
+        markers indicates we should retry with render=true (or give up) rather than
+        fall through to ``_listing_from_soup`` and emit a placeholder ``Amazon product``
+        row with all-N/A fields.
+        """
+        if not html or len(html) < 4000:
+            return True
+        low = html.lower()
+        markers = (
+            "id=\"producttitle\"",
+            "id='producttitle'",
+            "data-feature-name=\"title\"",
+            "property=\"og:title\"",
+            "property='og:title'",
+        )
+        return not any(m in low for m in markers)
+
     async def fetch_listing(self, asin: str, amazon_domain: str) -> NormalizedListing:
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
 
-        canonical, html = await self._fetch_html(target, amazon_domain)
+        # First attempt: respect SCRAPERAPI_RENDER (cheap path when off).
+        canonical, html, status = await self._fetch_html_lenient(target, amazon_domain)
+
+        # If the first pass came back empty / 4xx / a non-PDP shell, retry once with
+        # render=true. This covers ScraperAPI 4xx → empty body and Amazon stubs that
+        # don't include #productTitle until JS executes (common on amazon.in).
+        if (status >= 400 or self._is_thin_pdp_html(html)) and not self.render:
+            canonical_r, html_r, status_r = await self._fetch_html_lenient(
+                target, amazon_domain, force_render=True,
+            )
+            if status_r < 400 and html_r and not self._is_thin_pdp_html(html_r):
+                canonical, html, status = canonical_r, html_r, status_r
 
         if self._looks_like_blocked(html):
             return NormalizedListing(
@@ -1190,7 +1222,36 @@ class ScraperApiScrapingProvider:
                 previous_month_units=None,
                 previous_month_label=None,
                 product_category=None,
-                raw={"provider": "scraperapi", "error": "block_or_challenge", "html_sample": html[:500]},
+                raw={
+                    "provider": "scraperapi",
+                    "error": "block_or_challenge",
+                    "parse_thin": True,
+                    "html_sample": html[:500],
+                },
+            )
+
+        # Empty body / non-PDP shell after retry: surface a thin listing the runner can drop,
+        # rather than the friendly "Amazon product B0XXX" placeholder that pollutes the report.
+        if not html or self._is_thin_pdp_html(html):
+            return NormalizedListing(
+                asin=asin.upper(),
+                title="",
+                price=None,
+                currency="",
+                bsr_rank=None,
+                bsr_category=None,
+                avg_rating=None,
+                review_count=None,
+                canonical_url=canonical,
+                previous_month_units=None,
+                previous_month_label=None,
+                product_category=None,
+                raw={
+                    "provider": "scraperapi",
+                    "parse_thin": True,
+                    "http_status": status,
+                    "amazon_domain_hint": normalize_amazon_domain(amazon_domain),
+                },
             )
 
         soup = BeautifulSoup(html, "html.parser")
@@ -1227,9 +1288,20 @@ class ScraperApiScrapingProvider:
 
     @staticmethod
     def _discover_should_skip_competitor_tile(primary_title: str, tile_hint: str) -> bool:
+        """Skip accessory tiles when the primary is a handset — but only if the
+        primary itself isn't an accessory.
+
+        Without the accessory-primary check, an "iPhone 17 Pro Max case" primary
+        triggered ``_HANDSET_PRIMARY_HINT`` (matches "iphone") and then dropped
+        every other phone-case tile as "accessory noise". For an accessory primary,
+        accessory peers ARE the comparison set; only the handset-vs-accessory mix
+        is noise.
+        """
         ph = (primary_title or "").strip()
         hint = (tile_hint or "").strip()
         if not _HANDSET_PRIMARY_HINT.search(ph):
+            return False
+        if _ACCESSORY_TILE_HINT.search(ph):
             return False
         return bool(_ACCESSORY_TILE_HINT.search(hint))
 
@@ -1378,6 +1450,7 @@ class ScraperApiScrapingProvider:
         limit: int,
         *,
         candidate_pool_limit: int | None = None,
+        spec: Any = None,
     ) -> list[str]:
         """Collect related ASINs from PDP widgets plus a category SERP pass for cross-brand peers.
 
@@ -1388,6 +1461,11 @@ class ScraperApiScrapingProvider:
         ``limit`` controls ranking depth; ``candidate_pool_limit`` (when set) expands how many
         ASINs are returned so callers can filter (category, price band, variants) and still keep
         nine distinct competitors.
+
+        ``spec`` is an optional :class:`app.services.comparison_spec.ComparisonSpec` from
+        Gemini. When present we (a) use ``spec.query`` for the storefront SERP pass and
+        (b) filter widget tiles by ``spec.title_matches`` against the tile hint when the hint
+        is non-empty (the per-PDP filter in the runner's pass 1 enforces it on canonical titles).
         """
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
@@ -1404,10 +1482,22 @@ class ScraperApiScrapingProvider:
         pool_requested = max(limit, candidate_pool_limit) if candidate_pool_limit is not None else limit
         gather_cap = max(pool_requested * 6, pool_requested + 12, 66)
 
+        def _spec_allows(hint: str) -> bool:
+            # Tile hints are noisy and short; only veto when the hint is long enough that a
+            # mismatch is meaningful. Empty/short hints get filtered later via the canonical PDP title.
+            if spec is None:
+                return True
+            h = (hint or "").strip()
+            if len(h) < 10:
+                return True
+            return spec.title_matches(h)
+
         def try_add(cand: str, hint: str) -> None:
             if cand in seen or len(pairs) >= gather_cap:
                 return
             if self._discover_should_skip_competitor_tile(primary_title, hint):
+                return
+            if not _spec_allows(hint):
                 return
             seen.add(cand)
             pairs.append((cand, hint or ""))
@@ -1460,7 +1550,11 @@ class ScraperApiScrapingProvider:
                 if len(pairs) >= gather_cap:
                     break
 
-        kw = self._serp_keywords_for_cross_shop(soup, primary_title)
+        # Prefer the Gemini-derived query when present (precise compatibility, e.g. "iPhone 17 case"
+        # vs "iPhone 17 Pro case"); otherwise fall back to the breadcrumb/title heuristic.
+        kw = (spec.query if spec is not None else "").strip() or self._serp_keywords_for_cross_shop(
+            soup, primary_title,
+        )
         if kw and len(pairs) < gather_cap:
             serp_cap = min(max(28, pool_requested + 8), gather_cap)
             for a, h in await self._discover_serp_asin_hints(kw, amazon_domain, cap=serp_cap):
@@ -1678,12 +1772,19 @@ class ScraperApiScrapingProvider:
             elif self.save_html_on_empty:
                 self._dump_debug_html("reviews", f"{upper_asin}_p{page}", html, "zero_reviews")
 
-        # amazon.in often returns an empty shell without JS execution; try render before structured API.
-        if not reviews and self._amazon_in_client_render_heavy(amazon_domain):
-            for attempt_url, tag in ((target, "in_prerender_ref"), (alt_target, "in_prerender_alt")):
+        # If the first non-rendered pass yielded zero reviews (empty body or a JS-only shell),
+        # retry once with render=true. This used to be amazon.in-only; on recent runs we've
+        # seen the same starvation on .com / .co.uk too (especially after ScraperAPI 4xx
+        # short-circuits the body to ""), so the render fallback applies to all storefronts now.
+        if not reviews and not self.render:
+            tag_prefix = "in_prerender" if self._amazon_in_client_render_heavy(amazon_domain) else "prerender"
+            for attempt_url, tag in (
+                (target, f"{tag_prefix}_ref"),
+                (alt_target, f"{tag_prefix}_alt"),
+            ):
                 if reviews:
                     break
-                if tag == "in_prerender_alt" and alt_target == target:
+                if tag.endswith("_alt") and alt_target == target:
                     continue
                 rc, hr, sr = await self._fetch_html_lenient(attempt_url, amazon_domain, force_render=True)
                 if sr < 400 and hr:
@@ -1715,7 +1816,9 @@ class ScraperApiScrapingProvider:
                     struct_status,
                 )
 
-        if not reviews and self._amazon_in_client_render_heavy(amazon_domain):
+        if not reviews:
+            # Structured endpoint with render fallback — used to be amazon.in only; some .com PDPs
+            # also need it when the structured JSON returns empty without a rendered upstream.
             struct2, struct_next2, st2 = await self._fetch_structured_reviews(
                 upper_asin, amazon_domain, page, force_render=True,
             )
@@ -1738,7 +1841,10 @@ class ScraperApiScrapingProvider:
                 elif self.save_html_on_empty:
                     self._dump_debug_html("pdp_reviews", upper_asin, pdp_html, "pdp_zero_reviews")
 
-        if not reviews and page == 1 and self._amazon_in_client_render_heavy(amazon_domain):
+        if not reviews and page == 1 and not self.render:
+            # Final fallback: render the PDP and parse the embedded top-reviews block.
+            # Generalised from amazon.in-only because empty-body 4xx responses elsewhere
+            # also leave the PDP fallback without anything to scrape.
             pdp_target = f"{site}/dp/{upper_asin}"
             pc, ph, ps = await self._fetch_html_lenient(pdp_target, amazon_domain, force_render=True)
             if ps < 400 and ph:

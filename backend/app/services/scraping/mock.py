@@ -54,7 +54,11 @@ class MockScrapingProvider:
         limit: int,
         *,
         candidate_pool_limit: int | None = None,
+        spec: Any = None,
     ) -> list[str]:
+        # ``spec`` is the optional Gemini-driven ComparisonSpec; the mock provider has no real
+        # candidate metadata to filter against, so we accept it for protocol compatibility and ignore.
+        del spec
         base = asin.upper().encode() + b"|rivals|" + amazon_domain.encode()
         want = max(limit, candidate_pool_limit) if candidate_pool_limit is not None else limit
         out: list[str] = []

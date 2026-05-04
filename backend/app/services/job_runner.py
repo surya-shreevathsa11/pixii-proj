@@ -26,6 +26,7 @@ from app.services.revenue import (
     estimate_monthly_units_from_bsr,
     get_usd_inr_rate,
 )
+from app.services.comparison_spec import ComparisonSpec, infer_comparison_spec
 from app.services.price_history import (
     PriceHistoryError,
     fetch_apify_price_history,
@@ -94,6 +95,26 @@ def _is_service_or_accessory_listing(title: str, bsr_category: str | None, produ
         if cat and _SERVICE_CATEGORY_HINT.search(cat):
             return True
     return False
+
+
+def _is_thin_listing(nl: "NormalizedListing") -> bool:
+    """A scrape so empty it would render as 'Amazon product B0XXX' with all-N/A fields.
+
+    Triggered by ScraperAPI 4xx→empty body, Amazon stubs without #productTitle, or any
+    other path where neither title nor price nor BSR could be parsed. Also honors the
+    explicit ``raw['parse_thin']`` flag set by the scraper.
+    """
+    raw = nl.raw if isinstance(nl.raw, dict) else {}
+    if raw.get("parse_thin"):
+        return True
+    title = (nl.title or "").strip()
+    title_l = title.lower()
+    placeholder = (
+        not title
+        or title_l.startswith("amazon product ")
+        or title_l.startswith("(blocked?) ")
+    )
+    return placeholder and nl.price is None and nl.bsr_rank is None
 
 
 def persist_job_touch(session: Session, job: Job) -> None:
@@ -407,6 +428,47 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 if not target_asins:
                     raise ValueError("No ASINs supplied for competitive job")
 
+            # Fetch primary listing up-front for competitive jobs so the comparison spec
+            # (Gemini-driven) and downstream filters use the canonical PDP title/category.
+            # Cached to avoid re-fetching during pass 1.
+            primary_nl_cache: NormalizedListing | None = None
+            primary_title_for_filter: str = ""
+            primary_bsr_category: str | None = None
+            primary_product_category: str | None = None
+            comparison_spec: ComparisonSpec | None = None
+
+            if job.flow == JobFlow.competitive and target_asins:
+                job.phase = "Fetching primary product"
+                persist_job_touch(session, job)
+                try:
+                    primary_nl_cache = await provider.fetch_listing(target_asins[0], amazon_domain)
+                    primary_title_for_filter = (primary_nl_cache.title or "").strip()
+                    primary_bsr_category = primary_nl_cache.bsr_category
+                    primary_product_category = primary_nl_cache.product_category
+                except Exception as exc:
+                    logger.warning(
+                        "Primary fetch_listing failed for %s on %s (%s); discovery will proceed without title/category context.",
+                        target_asins[0], amazon_domain, exc,
+                    )
+                    primary_nl_cache = None
+                    primary_title_for_filter = ""
+
+                if primary_title_for_filter:
+                    job.phase = "Inferring comparison spec"
+                    persist_job_touch(session, job)
+                    try:
+                        comparison_spec = await infer_comparison_spec(
+                            primary_title_for_filter,
+                            primary_bsr_category or primary_product_category,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "infer_comparison_spec failed for %s (%s); falling back to heuristic discovery.",
+                            target_asins[0], exc,
+                        )
+                        comparison_spec = None
+
+            if job.flow == JobFlow.competitive:
                 if job.auto_discover_competitors:
                     primary = target_asins[0]
                     job.phase = "Discovering similar ASINs"
@@ -419,6 +481,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                             amazon_domain,
                             9,
                             candidate_pool_limit=pool_lim,
+                            spec=comparison_spec,
                         )
                     except Exception as exc:
                         # ScraperAPI 499 / 5xx / network blip: degrade gracefully to primary-only analysis
@@ -455,18 +518,6 @@ async def orchestrate(job_id: uuid.UUID) -> None:
             # Resolve the FX rate once per job so every listing's revenue uses the same INR conversion.
             fx_rate = await get_usd_inr_rate()
 
-            primary_title_for_filter: str = ""
-            primary_bsr_category: str | None = None
-            primary_product_category: str | None = None
-            if job.flow == JobFlow.competitive and target_asins:
-                # Best-effort: derive primary listing fingerprint once for downstream filtering.
-                try:
-                    primary_nl = await provider.fetch_listing(target_asins[0], amazon_domain)
-                    primary_title_for_filter = (primary_nl.title or "").strip()
-                    primary_bsr_category = primary_nl.bsr_category
-                    primary_product_category = primary_nl.product_category
-                except Exception:
-                    primary_title_for_filter = ""
             primary_is_handset = bool(_HANDSET_PRIMARY_HINT.search(primary_title_for_filter))
 
             # Pass 1: fetch all candidates, run quality filters (services / off-category / accessories),
@@ -474,16 +525,28 @@ async def orchestrate(job_id: uuid.UUID) -> None:
             # complete information across the whole candidate set.
             staged: list[tuple[str, "NormalizedListing"]] = []
             primary_asin = target_asins[0] if target_asins else ""
+            primary_thin_warned = False
             for idx, asin in enumerate(target_asins, start=1):
-                try:
-                    nl = await provider.fetch_listing(asin, amazon_domain)
-                except Exception as exc:
-                    logger.warning("fetch_listing failed for %s (%s): %s", asin, amazon_domain, exc)
-                    if asin == primary_asin:
-                        raise
-                    continue
+                # Reuse the primary listing we already fetched for spec inference; saves one ScraperAPI call.
+                if asin == primary_asin and primary_nl_cache is not None:
+                    nl = primary_nl_cache
+                else:
+                    try:
+                        nl = await provider.fetch_listing(asin, amazon_domain)
+                    except Exception as exc:
+                        logger.warning("fetch_listing failed for %s (%s): %s", asin, amazon_domain, exc)
+                        if asin == primary_asin:
+                            raise
+                        continue
 
                 if job.flow == JobFlow.competitive and asin != primary_asin:
+                    if _is_thin_listing(nl):
+                        # ScraperAPI returned a thin/empty page even after render-retry.
+                        # Persisting it would yield "Amazon product B0XXX" with all-N/A
+                        # rows; skip instead.
+                        job.phase = f"Skipped thin/blocked listing {asin}"
+                        persist_job_touch(session, job)
+                        continue
                     if _is_universal_service_listing(nl.title or "", nl.bsr_category, nl.product_category):
                         job.phase = f"Skipped service/plan listing {asin}"
                         persist_job_touch(session, job)
@@ -503,6 +566,23 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                         job.phase = f"Skipped accessory listing {asin}"
                         persist_job_touch(session, job)
                         continue
+                    if comparison_spec is not None and not comparison_spec.title_matches(nl.title or ""):
+                        # Gemini-derived must_match / must_not_match veto: e.g. "iPhone 17 Pro"
+                        # tile bleeding into an "iPhone 17" comparison set.
+                        job.phase = f"Skipped off-spec listing {asin}"
+                        persist_job_touch(session, job)
+                        continue
+
+                if asin == primary_asin and _is_thin_listing(nl):
+                    # Keep the primary (downstream needs *something*) but warn the user that
+                    # the upstream scrape was empty so the report will be sparse.
+                    if not primary_thin_warned:
+                        job.error_message = (
+                            "Primary product page came back empty/blocked from ScraperAPI; "
+                            "downstream price, BSR, and revenue fields may be missing. "
+                            "Try SCRAPERAPI_RENDER=true or retry the job."
+                        )
+                        primary_thin_warned = True
 
                 staged.append((asin, nl))
                 job.phase = f"Fetched listing ({idx}/{total or 1}): {asin}"
