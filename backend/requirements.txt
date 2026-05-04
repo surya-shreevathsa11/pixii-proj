@@ -1,7 +1,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 sqlmodel==0.0.22
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.12
 httpx==0.28.1
 pydantic-settings==2.7.0
 python-multipart==0.0.20
