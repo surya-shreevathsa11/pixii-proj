@@ -4,15 +4,37 @@
 
 Do this from the **repo root** (`pixii-proj/`) unless a step says `cd backend` or `cd frontend`.
 
+> **TL;DR — three terminals, copy-paste:**
+>
+> ```bash
+> # T1: database
+> docker compose up -d
+>
+> # T2: backend (FastAPI on :8000)
+> cd backend && python3 -m venv .venv && source .venv/bin/activate \
+>   && pip install -U pip && pip install -U -r requirements.txt \
+>   && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+>
+> # T3: frontend (Next.js on :3000)
+> cd frontend && npm install && npm run dev
+> ```
+>
+> If you came back to the project later, the **only commands you need** are
+> `docker compose up -d`, `source backend/.venv/bin/activate && pip install -U -r backend/requirements.txt`,
+> then start uvicorn and `npm run dev` again.
+
 ### Prerequisites
 
 | Tool | Notes |
 |------|--------|
 | **Docker** | For PostgreSQL only (`docker compose up -d`). |
-| **Python** | **3.12, 3.13, or 3.14** recommended. Use `python3.12 -m venv .venv` (or `python3.14`) if `python3` points at an older interpreter. |
+| **Python** | **3.12, 3.13, or 3.14** all work. Use `python3.12 -m venv .venv` (or `python3.14`) if `python3` points at an older interpreter. |
 | **Node.js** | **18+** for the Next.js app. |
 
-`backend/requirements.txt` pins **`psycopg2-binary==2.9.12`**, which has **pre-built wheels for Python 3.14** (no `pg_config` / libpq dev packages needed for a normal `pip install`).
+Pinned versions in `backend/requirements.txt` that matter for local dev:
+
+- **`psycopg2-binary==2.9.12`** — wheels published for **Python 3.14**, no `pg_config` / libpq dev packages required.
+- **`sqlmodel==0.0.38`** — compatible with **Pydantic ≥ 2.11**. Older `0.0.22` triggers `PydanticUserError: Field 'id' requires a type annotation` on Python 3.14.
 
 ### 1) Database
 
@@ -24,12 +46,22 @@ Defaults: user `pixii`, password `pixii`, database `amazon_analytics`, port **54
 
 ### 2) Backend API
 
+First time:
+
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -U pip
-pip install -r requirements.txt
+pip install -U -r requirements.txt
+```
+
+Coming back later (existing venv): just **upgrade** in case any pin changed:
+
+```bash
+cd backend
+source .venv/bin/activate
+pip install -U -r requirements.txt
 ```
 
 **`backend/.env`** (create this file if you do not have one). For a first run you only need Postgres to match Docker; scraping defaults to **mock** data without API keys:
@@ -38,6 +70,17 @@ pip install -r requirements.txt
 DATABASE_URL=postgresql://pixii:pixii@localhost:5432/amazon_analytics
 # Optional: explicit mock mode (same as app default if omitted)
 SCRAPING_PROVIDER=mock
+```
+
+To use real scraping later, add to `backend/.env`:
+
+```env
+SCRAPING_PROVIDER=scraperapi
+SCRAPING_API_KEY=your_scraperapi_key
+# Leave SCRAPERAPI_COUNTRY_CODE empty for multi-region; uncomment to lock proxy geo:
+# SCRAPERAPI_COUNTRY_CODE=us
+# Optional Gemini for review summaries:
+# GOOGLE_API_KEY=your_gemini_key
 ```
 
 Start **uvicorn from `backend/`** so `backend/.env` is loaded reliably:
@@ -76,10 +119,11 @@ Use **`NEXT_PUBLIC_API_BASE`** only when the UI and API are on different deploye
 ### 4) Checklist
 
 1. `docker compose up -d`  
-2. Backend venv + `pip install -r requirements.txt` + **uvicorn on 8000** (cwd = `backend/`)  
+2. Backend venv + `pip install -U -r requirements.txt` + **uvicorn on 8000** (cwd = `backend/`)  
 3. Frontend `npm install` + **`npm run dev`** on **3000**  
 
-Stop Postgres: `docker compose down` (add `-v` to delete the data volume).
+Stop Postgres when finished: `docker compose down` (add `-v` to delete the data volume).
+Stop the backend / frontend with **Ctrl+C** in their respective terminals.
 
 ### Troubleshooting (local)
 
@@ -88,6 +132,7 @@ Stop Postgres: `docker compose down` (add `-v` to delete the data volume).
 | **`pg_config` / build errors for `psycopg2-binary`** | Use the repo’s current `requirements.txt` (wheels for 3.14). Prefer `pip install -U pip` then reinstall. Optional: `pip install --only-binary=:all: -r requirements.txt`. |
 | **Frontend cannot reach API** | Confirm uvicorn is listening on **8000**, `API_PROXY_TARGET` matches, restart **`npm run dev`** after changing `.env.local`. |
 | **`ModuleNotFoundError` / wrong Python** | Recreate the venv with the intended binary: `rm -rf backend/.venv && cd backend && python3.12 -m venv .venv` (or `python3.14`). |
+| **`PydanticUserError: Field 'id' requires a type annotation`** | An older venv has `sqlmodel==0.0.22` (incompatible with newer Pydantic). Upgrade: `cd backend && source .venv/bin/activate && pip install -U -r requirements.txt`. |
 
 ---
 
