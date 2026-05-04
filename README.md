@@ -81,6 +81,9 @@ SCRAPING_API_KEY=your_scraperapi_key
 # SCRAPERAPI_COUNTRY_CODE=us
 # Optional Gemini for review summaries:
 # GOOGLE_API_KEY=your_gemini_key
+# Optional Apify for 90-day price history on competitive jobs (both keys required):
+# APIFY_API_TOKEN=your_apify_token
+# APIFY_PRICE_HISTORY_ACTOR=user~actor-name
 ```
 
 Start **uvicorn from `backend/`** so `backend/.env` is loaded reliably:
@@ -180,3 +183,26 @@ ALTER TABLE listing ADD COLUMN unit_price_inr REAL;
 - **Currency**: each `listing` row stores **Amazon listing price + ISO currency** from the PDP. Estimated **monthly revenue** fields stay **normalized to INR** for a single rollup column; the analysis UI shows storefront prices in the listing currency and labels INR revenue explicitly.
 
 Revenue is always stored and displayed in INR. To override the static USD→INR fallback when both live FX endpoints fail, set `USD_TO_INR_RATE=83` (or similar) in `backend/.env`.
+
+### Apify 90-day price history (competitive jobs only)
+
+Optional. When both `APIFY_API_TOKEN` and `APIFY_PRICE_HISTORY_ACTOR` are set, every competitive job
+makes **one** Apify run-sync call for the **primary ASIN only** and stores the resulting series in
+the `price_history` table. The job page then renders an inline SVG line chart above the leaderboard,
+and any historical analysis you revisit from "Recent analyses" automatically shows the same chart
+because it's served from the database, not re-fetched.
+
+```env
+# Both required to enable. Leave either empty to disable the feature without errors.
+APIFY_API_TOKEN=          # https://console.apify.com/account/integrations
+APIFY_PRICE_HISTORY_ACTOR=  # e.g. user~amazon-price-history (slug from your Apify Console actor page)
+# APIFY_TIMEOUT_SECONDS=90
+# PRICE_HISTORY_DAYS=90
+```
+
+Operational notes:
+
+- **Failure is non-fatal**: an Apify error or timeout logs a warning and the rest of the job (reviews, summaries) still completes.
+- **Cost**: one actor run per competitive job. Subsequent visits to the same job page read from Postgres only.
+- **Actor compatibility**: the parser handles common shapes (`{date, price, currency}`, `{d, p}`, `{priceHistory: [...]}`, `{prices: [...]}`, etc.). If your chosen actor returns something exotic, only `backend/app/services/price_history.py::parse_apify_payload` needs adjusting.
+- **Market jobs** are unaffected — price history is competitive-only by design.

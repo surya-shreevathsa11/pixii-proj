@@ -48,6 +48,14 @@ class Settings(BaseSettings):
 
     keepa_api_key: str = ""
 
+    # Apify (90-day price history for the primary ASIN of competitive jobs).
+    # Both apify_api_token and apify_price_history_actor must be set for the feature to activate.
+    apify_api_token: str = ""
+    # Actor slug from console.apify.com in `<user>~<actor-name>` form. Empty disables the feature.
+    apify_price_history_actor: str = ""
+    apify_timeout_seconds: float = 90.0
+    price_history_days: int = 90
+
     # Revenue display normalization. Backend always reports estimated revenue in INR;
     # the env rate is used as a static fallback when live FX endpoints are unreachable.
     display_currency: str = "INR"

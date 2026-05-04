@@ -26,6 +26,11 @@ from app.services.revenue import (
     estimate_monthly_units_from_bsr,
     get_usd_inr_rate,
 )
+from app.services.price_history import (
+    PriceHistoryError,
+    fetch_apify_price_history,
+    upsert_price_history,
+)
 from app.services.scraping.factory import get_scraping_provider
 from app.services.scraping.scraperapi import (
     _ACCESSORY_TILE_HINT,
@@ -644,6 +649,40 @@ async def orchestrate(job_id: uuid.UUID) -> None:
 
             if job.flow == JobFlow.competitive:
                 total = len(target_asins)
+
+                # Optional 90-day price history for the primary ASIN. Env-gated; failure is
+                # non-fatal so the rest of the competitive pipeline (reviews, summaries) still runs.
+                if (
+                    settings.apify_api_token.strip()
+                    and settings.apify_price_history_actor.strip()
+                    and target_asins
+                ):
+                    primary_for_history = target_asins[0]
+                    job.phase = f"Fetching 90-day price history ({primary_for_history})"
+                    persist_job_touch(session, job)
+                    try:
+                        currency, points = await fetch_apify_price_history(
+                            primary_for_history, amazon_domain
+                        )
+                        upsert_price_history(
+                            session, job.id, primary_for_history, currency, points,
+                        )
+                        logger.info(
+                            "Stored %d price points for %s via %s",
+                            len(points),
+                            primary_for_history,
+                            settings.apify_price_history_actor,
+                        )
+                    except PriceHistoryError as exc:
+                        logger.warning(
+                            "Apify price history skipped for %s: %s", primary_for_history, exc,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Unexpected price-history error for %s (%s); continuing job.",
+                            primary_for_history, exc,
+                        )
+
                 job.phase = "Review ingestion"
                 persist_job_touch(session, job)
 

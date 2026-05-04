@@ -102,3 +102,21 @@ class Summary(SQLModel, table=True):
     why_buyers_caution: Optional[str] = Field(default=None, max_length=16000)
 
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class PriceHistory(SQLModel, table=True):
+    """Persisted 90-day price series for the primary ASIN of competitive jobs.
+
+    Populated once when the job runs (Apify fetch); subsequent job-page loads read from this row.
+    `points` is a JSON list shaped like [{"d": "YYYY-MM-DD", "p": 1234.0}, ...] sorted ascending.
+    """
+
+    __tablename__ = "price_history"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    job_id: uuid.UUID = Field(foreign_key="job.id", index=True)
+    asin: str = Field(max_length=32, index=True)
+    currency: str = Field(default="", max_length=8)
+    points: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    source: str = Field(default="", max_length=128)
+    captured_at: datetime = Field(default_factory=utc_now)
