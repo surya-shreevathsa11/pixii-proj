@@ -40,6 +40,12 @@ app.add_middleware(
 app.include_router(jobs_router, prefix="/api")
 
 
+@app.get("/health")
+def health_root():
+    """Liveness probe for load balancers and hosting platforms that expect ``/health``."""
+    return {"status": "ok"}
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
