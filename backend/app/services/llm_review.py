@@ -88,6 +88,7 @@ def _get_gemini_model() -> genai.GenerativeModel | None:
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 
 
 def extract_json_blob(text: str) -> dict[str, Any]:
@@ -95,6 +96,51 @@ def extract_json_blob(text: str) -> dict[str, Any]:
     fm = _JSON_FENCE_RE.search(stripped)
     payload = fm.group(1) if fm else stripped
     return json.loads(payload)
+
+
+def _normalize_key_purchase_criteria(raw: Any) -> list[str]:
+    """Accept arrays, bullet strings, or newline-delimited strings from LLM output."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        out = [str(x).strip() for x in raw if str(x).strip()]
+        return out[:14]
+    if isinstance(raw, str):
+        chunks = re.split(r"[\r\n]+", raw)
+        out: list[str] = []
+        for chunk in chunks:
+            line = _BULLET_PREFIX_RE.sub("", chunk).strip(" -•*")
+            if line:
+                out.append(line)
+        return out[:14]
+    return []
+
+
+def _fallback_key_purchase_criteria_from_reviews(review_lines: list[str], limit: int = 8) -> list[str]:
+    """
+    Deterministic fallback when Gemini output is malformed:
+    emit concise shopper-language snippets from review text.
+    """
+    picks: list[str] = []
+    seen: set[str] = set()
+    for line in review_lines:
+        if ":" in line:
+            text = line.split(":", 1)[1].strip()
+        else:
+            text = line.strip()
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"\bRead more\b", "", text, flags=re.I).strip(" .")
+        if len(text) < 18:
+            continue
+        snippet = text[:140].rstrip(" ,.;:")
+        key = snippet.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        picks.append(snippet)
+        if len(picks) >= limit:
+            break
+    return picks
 
 
 def _response_text(rsp: Any) -> str:
@@ -152,6 +198,7 @@ Rules:
             generation_config={
                 "temperature": 0.2,
                 "max_output_tokens": 2048,
+                "response_mime_type": "application/json",
             },
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -254,6 +301,7 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
             generation_config={
                 "temperature": 0.25,
                 "max_output_tokens": 4096,
+                "response_mime_type": "application/json",
             },
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -273,7 +321,9 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
         summary = str(data.get("final_summary") or "").strip()
         like = str(data.get("why_buyers_like") or "").strip() or None
         caution = str(data.get("why_buyers_caution") or "").strip() or None
-        kp = [str(x).strip() for x in (data.get("key_purchase_criteria") or []) if str(x).strip()]
+        kp = _normalize_key_purchase_criteria(data.get("key_purchase_criteria"))
+        if not kp:
+            kp = _fallback_key_purchase_criteria_from_reviews(review_lines)
         if not summary:
             summary = (raw_txt or "")[:65000]
         return CompetitiveReviewSynthesis(
@@ -383,6 +433,7 @@ Return strict JSON ONLY (no markdown) with keys:
             generation_config={
                 "temperature": 0.35,
                 "max_output_tokens": 4096,
+                "response_mime_type": "application/json",
             },
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -398,10 +449,9 @@ Return strict JSON ONLY (no markdown) with keys:
             return raw_txt[:4000], []
 
         summary = str(data.get("final_summary") or "").strip()
-        kp = list(data.get("key_purchase_criteria") or [])
+        kp = _normalize_key_purchase_criteria(data.get("key_purchase_criteria"))
         if not summary:
             summary = raw_txt[:4000]
-        kp = [str(item).strip() for item in kp if str(item).strip()]
         return summary, kp[:14]
 
     try:
