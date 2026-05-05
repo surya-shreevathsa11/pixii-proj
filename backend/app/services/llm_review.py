@@ -203,6 +203,15 @@ def _single_pass_corpus_has_text(review_lines: list[str]) -> bool:
     return False
 
 
+def _no_readable_reviews_short_summary(asin: str, product_title: str) -> str:
+    label = (product_title or "").strip() or f"ASIN {asin}"
+    return (
+        f"{label}: no readable customer comments were available in the latest synced reviews, "
+        "so this is a product-only placeholder summary. Re-run after more text reviews are captured "
+        "to generate evidence-based purchase criteria."
+    )
+
+
 async def synthesize_reviews_single_pass(
     asin: str, product_title: str, review_lines: list[str],
 ) -> CompetitiveReviewSynthesis:
@@ -211,20 +220,12 @@ async def synthesize_reviews_single_pass(
     # Star-only rows (Amazon returned ratings but empty bodies) must not hit Claude: it burns
     # quota and often returns long non-JSON essays about "absence of data" instead of useful KPC.
     if not _single_pass_corpus_has_text(review_lines):
-        n = len(review_lines)
         return CompetitiveReviewSynthesis(
-            final_summary=(
-                f"No usable review text was captured for {asin} ({n} rating row(s) with empty titles/bodies). "
-                "Key purchase criteria cannot be grounded in shopper language. "
-                "Try SCRAPERAPI_RENDER=true, re-run the job, or check that reviews are visible on the live PDP."
-            ),
+            final_summary=_no_readable_reviews_short_summary(asin, product_title),
             key_purchase_criteria=[
-                "Re-run with reliable review-text scraping—criteria need quoted shopper feedback.",
+                "No readable customer comments were captured for this item yet.",
             ],
-            why_buyers_like=(
-                f"Ratings were synced but not review prose ({n} row(s)). "
-                "Positive star counts alone do not reveal which product attributes buyers value."
-            ),
+            why_buyers_like=None,
             why_buyers_caution=None,
         )
 

@@ -38,5 +38,17 @@ class TestExtractJsonBlobFallback(unittest.TestCase):
         self.assertEqual(data.get("key_purchase_criteria"), ["Fast charging", "Build quality"])
 
 
+class TestNoReadableReviewFallback(unittest.TestCase):
+    def setUp(self) -> None:
+        from app.services import llm_review
+
+        self.fn = llm_review._no_readable_reviews_short_summary
+
+    def test_prefers_product_title_in_short_summary(self) -> None:
+        txt = self.fn("B0TEST1234", "Spigen Ultra Hybrid Case")
+        self.assertIn("Spigen Ultra Hybrid Case", txt)
+        self.assertIn("no readable customer comments", txt)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -356,6 +356,14 @@ def _fallback_kpc_from_reviews_rows(reviews_rows: list[Review], limit: int = 8) 
     return picks
 
 
+def _short_summary_without_readable_reviews(asin: str, product_title: str) -> str:
+    label = (product_title or "").strip() or f"ASIN {asin}"
+    return (
+        f"{label}: no readable customer comments were captured in synced reviews yet, "
+        "so this is a short product-level placeholder summary."
+    )
+
+
 async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     if session.exec(
         select(Summary).where(Summary.job_id == job.id).where(Summary.asin == asin)
@@ -372,24 +380,12 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     ).all()
 
     if not reviews_rows:
-        hint = "enable reviews API or widen limits."
-        if job.flow != JobFlow.competitive and settings.reviews_only_with_customer_images:
-            hint += (
-                " With REVIEWS_ONLY_WITH_CUSTOMER_IMAGES enabled, only reviews that include customer photos are kept. "
-                "try SCRAPERAPI_RENDER=true, or set REVIEWS_ONLY_WITH_CUSTOMER_IMAGES=false to include all text reviews."
-            )
-        elif job.flow == JobFlow.competitive:
-            hint += (
-                " Competitive analyses keep up to ten recent reviews per ASIN. "
-                "On amazon.in, review HTML is often client-rendered: set SCRAPERAPI_RENDER=true (or rely on the "
-                "server’s one-shot render fallback when structured reviews are empty) and ensure AMAZON_DOMAIN matches the storefront."
-            )
         stub = Summary(
             job_id=job.id,
             asin=asin,
             map_batches=[],
-            final_summary=f"No synced reviews captured for {asin}; {hint}",
-            key_purchase_criteria=[],
+            final_summary=_short_summary_without_readable_reviews(asin, product_title or ""),
+            key_purchase_criteria=["No readable customer comments were captured for this item yet."],
         )
         session.add(stub)
         session.commit()
@@ -423,14 +419,8 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
                 job_id=job.id,
                 asin=asin,
                 map_batches=[],
-                final_summary=(
-                    f"Synced {len(reviews_rows)} review row(s) for {asin}, but none contained usable text "
-                    "(empty titles and bodies—often a scrape or render issue). Skipped Claude to save quota. "
-                    "Try SCRAPERAPI_RENDER=true and re-run."
-                ),
-                key_purchase_criteria=[
-                    "Re-run after fixing review-text capture; KPC needs actual shopper sentences.",
-                ],
+                final_summary=_short_summary_without_readable_reviews(asin, product_title or ""),
+                key_purchase_criteria=["No readable customer comments were captured for this item yet."],
             )
             session.add(stub)
             session.commit()
