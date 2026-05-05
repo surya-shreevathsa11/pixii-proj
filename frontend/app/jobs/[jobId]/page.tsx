@@ -272,7 +272,7 @@ export default function JobInsightPage() {
       <header className="flex flex-wrap items-start justify-between gap-4 pb-2">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Pixii Market Intel</p>
+            <p className="text-lg font-bold tracking-wide text-zinc-900 sm:text-2xl">Pixii Market Intel</p>
             <span
               className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${chipVariant(job?.status ?? "queued")}`}
             >
@@ -297,14 +297,23 @@ export default function JobInsightPage() {
             <div className="text-xs text-zinc-500">Tracked ASINs: {job?.asins.length ?? 0}</div>
           </div>
         </div>
-        <nav className="flex flex-wrap gap-3 text-sm">
-          <Link href="/market" className="text-orange-700 hover:text-orange-600">
+        <nav className="flex flex-wrap gap-2 text-sm">
+          <Link
+            href="/market"
+            className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 font-semibold text-orange-800 transition hover:bg-orange-100"
+          >
             New market analysis
           </Link>
-          <Link href="/competitive" className="text-orange-700 hover:text-orange-600">
+          <Link
+            href="/competitive"
+            className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 font-semibold text-orange-800 transition hover:bg-orange-100"
+          >
             New SKU study
           </Link>
-          <Link href="/" className="text-orange-700 hover:text-orange-600">
+          <Link
+            href="/"
+            className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 font-semibold text-orange-800 transition hover:bg-orange-100"
+          >
             Overview
           </Link>
         </nav>
@@ -378,18 +387,25 @@ export default function JobInsightPage() {
       ) : null}
 
       {job && job.flow === "competitive" ? (
-        <nav className="flex flex-wrap items-center gap-3 text-sm text-zinc-600" aria-label="On-page sections">
-          <span className="font-medium text-zinc-900">Jump to:</span>
-          <a href="#leaderboard" className="rounded-md text-orange-700 underline-offset-2 hover:underline">
-            Revenue leaderboard
+        <nav className="flex flex-wrap items-center gap-2 text-sm text-zinc-600" aria-label="On-page sections">
+          <span className="mr-1 font-medium text-zinc-900">Jump to:</span>
+          <a
+            href="#leaderboard"
+            className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 font-semibold text-orange-800 transition hover:bg-orange-100"
+          >
+            Revenue Leaderboard
           </a>
-          <span className="text-zinc-300">·</span>
-          <a href="#dossiers" className="rounded-md text-orange-700 underline-offset-2 hover:underline">
-            Review dossiers
+          <a
+            href="#dossiers"
+            className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 font-semibold text-orange-800 transition hover:bg-orange-100"
+          >
+            Review Dossiers
           </a>
-          <span className="text-zinc-300">·</span>
-          <a href="#youtube-intel" className="rounded-md text-orange-700 underline-offset-2 hover:underline">
-            YouTube signals
+          <a
+            href="#youtube-intel"
+            className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 font-semibold text-orange-800 transition hover:bg-orange-100"
+          >
+            Youtube Analysis
           </a>
         </nav>
       ) : null}
@@ -398,7 +414,7 @@ export default function JobInsightPage() {
         <section id="leaderboard" className="scroll-mt-24 rounded-xl border border-zinc-100 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Estimated monthly revenue leaderboard</h2>
+          <h2 className="text-xl font-semibold">Estimated Monthly Revenue Leaderboard</h2>
               <p className="text-sm text-zinc-500">
                 Unit prices use the Amazon storefront currency shown on each PDP. Estimated monthly revenue stays in
                 INR for one comparable rollup. Previous-month sales times unit price (converted to INR) falls back to a
@@ -647,7 +663,7 @@ export default function JobInsightPage() {
 
       {job?.flow === "competitive" ? (
         <section id="youtube-intel" className="scroll-mt-24 space-y-4 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-semibold">YouTube demand &amp; review coverage</h2>
+          <h2 className="text-xl font-semibold">Youtube Analysis</h2>
           <p className="text-sm text-zinc-600">
             Optional appendix from YouTube Data API v3 (search + video metadata + a small comment sample), summarized by
             Claude when <code className="rounded bg-zinc-100 px-1 text-xs">ANTHROPIC_API_KEY</code> is set. Query is derived from
