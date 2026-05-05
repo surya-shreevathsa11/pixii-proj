@@ -1718,23 +1718,66 @@ class ScraperApiScrapingProvider:
 
         asins: list[str] = []
         seen: set[str] = set()
+        # Prefer strict Best Sellers rank tiles to avoid grabbing unrelated ASINs from nav/ads/widgets.
+        rank_tile_selectors = (
+            "#zg .zg-grid-general-faceout",
+            "#zg-ordered-list li.zg-item-immersion",
+            "li.zg-item-immersion",
+            '[id^="gridItemRoot"]',
+            "div.p13n-sc-uncoverable-faceout",
+        )
 
-        for node in soup.select("[data-asin]"):
-            a = node.get("data-asin") or ""
-            a = str(a).strip().upper()
-            if len(a) == 10 and a.startswith("B") and a not in seen:
-                seen.add(a)
-                asins.append(a)
+        def _asin_from_href(href: str) -> str | None:
+            m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", href or "", flags=re.I)
+            if not m:
+                return None
+            val = m.group(1).upper()
+            return val if len(val) == 10 and val.startswith("B") else None
+
+        def _try_add(candidate: str | None) -> None:
+            if not candidate:
+                return
+            if candidate in seen:
+                return
+            seen.add(candidate)
+            asins.append(candidate)
+
+        # Pass 1: strict ranked containers, preserving DOM order (top -> down).
+        for sel in rank_tile_selectors:
+            for node in soup.select(sel):
+                cand = (node.get("data-asin") or "").strip().upper()
+                if not (len(cand) == 10 and cand.startswith("B")):
+                    cand = ""
+                if not cand:
+                    for a in node.select('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'):
+                        cand = _asin_from_href((a.get("href") or "") + "")
+                        if cand:
+                            break
+                _try_add(cand or None)
+                if len(asins) >= limit:
+                    return asins[:limit]
+
+        # Pass 2: keep Best Sellers context only (ordered list root) before broad fallback.
+        if len(asins) < limit:
+            for node in soup.select("#zg [data-asin], #zg-ordered-list [data-asin]"):
+                cand = (node.get("data-asin") or "").strip().upper()
+                if len(cand) == 10 and cand.startswith("B"):
+                    _try_add(cand)
+                if len(asins) >= limit:
+                    return asins[:limit]
+
+        # Pass 3: broad fallback (still preserves first-seen order) for markup drift.
+        if len(asins) < limit:
+            for node in soup.select("[data-asin]"):
+                cand = (node.get("data-asin") or "").strip().upper()
+                if len(cand) == 10 and cand.startswith("B"):
+                    _try_add(cand)
+                if len(asins) >= limit:
+                    return asins[:limit]
 
         if len(asins) < limit:
             for a in soup.select('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/aw/d/"]'):
-                href = (a.get("href") or "") + ""
-                m = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})", href, flags=re.I)
-                if m:
-                    val = m.group(1).upper()
-                    if val not in seen and val.startswith("B"):
-                        seen.add(val)
-                        asins.append(val)
+                _try_add(_asin_from_href((a.get("href") or "") + ""))
                 if len(asins) >= limit:
                     break
 

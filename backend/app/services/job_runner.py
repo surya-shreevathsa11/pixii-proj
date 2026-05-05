@@ -461,7 +461,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 job.phase = "Resolving bestseller ASINs"
                 persist_job_touch(session, job)
 
-                discovered = await provider.fetch_best_seller_asins(job.bestsellers_url, amazon_domain, 12)
+                discovered = await provider.fetch_best_seller_asins(job.bestsellers_url, amazon_domain, 10)
                 if not discovered:
                     raise ValueError("No ASINs returned for bestsellers URL; verify provider + URL")
 

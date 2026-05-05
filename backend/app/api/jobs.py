@@ -175,6 +175,18 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         except Exception:
             logger.warning("Invalid youtube_insights JSON for job %s", job.id)
 
+    market_order: dict[str, int] = {(a or "").upper(): idx for idx, a in enumerate(job.asins or [])}
+    if job.flow == JobFlow.market and market_order:
+        listings_sorted = sorted(
+            listings_out,
+            key=lambda listing: (
+                market_order.get((listing.asin or "").upper(), 10_000),
+                listing.bsr_rank if listing.bsr_rank is not None else 10_000_000,
+            ),
+        )
+    else:
+        listings_sorted = sorted(listings_out, key=lambda listing: -(listing.estimated_monthly_revenue or 0.0))
+
     return JobDetailResponse(
         id=job.id,
         flow=job.flow,
@@ -187,7 +199,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         competitor_urls=competitor_urls,
         asins=list(job.asins or []),
         market_totals_note=job.market_totals_note,
-        listings=sorted(listings_out, key=lambda listing: -(listing.estimated_monthly_revenue or 0.0)),
+        listings=listings_sorted,
         summaries=sorted(summaries_out, key=lambda sm: sm.asin),
         reviews=reviews_out,
         reviews_count_total=len(reviews_total),
