@@ -73,7 +73,7 @@ class YouTubeReviewVideoLinkOut(BaseModel):
 
 
 class YouTubeCompetitorMentionOut(BaseModel):
-    asin: str
+    product_name: str
     mention_count: int = 0
     examples: list[str] = Field(default_factory=list)
 

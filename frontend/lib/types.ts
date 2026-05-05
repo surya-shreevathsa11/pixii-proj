@@ -49,7 +49,7 @@ export interface YouTubeReviewVideoLink {
 }
 
 export interface YouTubeCompetitorMention {
-  asin: string;
+  product_name: string;
   mention_count: number;
   examples: string[];
 }

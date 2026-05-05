@@ -45,7 +45,7 @@ def _competitor_rows_for_plan(listings: list[Listing], primary_asin: str) -> lis
             continue
         t = (row.title or "").strip()
         if t:
-            rows.append({"asin": au, "title": t[: _MAX_TITLE_FOR_PLAN]})
+            rows.append({"product_name": t[: _MAX_TITLE_FOR_PLAN]})
     return rows[:12]
 
 
@@ -106,7 +106,7 @@ Return strict JSON ONLY (no markdown) with keys:
 - creator_coverage_score: number 0-100 — higher when more distinct channel_title values appear among top results (breadth); lower if one channel dominates or few videos.
 - trend_freshness_score: number 0-100 — higher when published_at dates are recent (within ~18 months for most videos); lower if everything is very old. Parse ISO dates from the payload.
 - top_questions: array of 5-12 strings — recurring questions or anxieties buyers ask in comments or imply in titles; each must be traceable to provided comment text or video title/description snippets.
-- competitor_mentions: array of objects {{ "asin": string, "mention_count": integer, "examples": string[] }} — count how many videos (by title+description) plausibly mention competitor products; only use ASINs from the competitors list in the payload. examples are short video titles from this payload.
+- competitor_mentions: array of objects {{ "product_name": string, "mention_count": integer, "examples": string[] }} — count how many videos (by title+description) plausibly mention competitor products; only use product_name values from the competitors list in the payload. examples are short video titles from this payload.
 - review_video_links: array of up to 6 objects {{ "url", "title", "channel", "reason" }} — best review-like videos from the payload only. url must be https://www.youtube.com/watch?v=VIDEO_ID using video_id from payload.
 
 Scoring rubric (approximate):
@@ -184,11 +184,13 @@ def _heuristic_questions(comment_snippets: list[dict[str, Any]], limit: int = 10
     return out
 
 
-def _normalize_mention(raw: Any, allowed_asins: set[str]) -> Optional[dict[str, Any]]:
+def _normalize_mention(raw: Any, allowed_names: set[str]) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
-    asin = str(raw.get("asin") or "").strip().upper()
-    if asin not in allowed_asins:
+    product_name = str(raw.get("product_name") or "").strip()
+    if not product_name:
+        return None
+    if product_name.casefold() not in allowed_names:
         return None
     try:
         n = int(raw.get("mention_count") or 0)
@@ -196,7 +198,7 @@ def _normalize_mention(raw: Any, allowed_asins: set[str]) -> Optional[dict[str, 
         n = 0
     ex = raw.get("examples") or []
     examples = [str(x).strip()[:200] for x in ex if str(x).strip()][:4]
-    return {"asin": asin, "mention_count": max(0, n), "examples": examples}
+    return {"product_name": product_name[:240], "mention_count": max(0, n), "examples": examples}
 
 
 def _normalize_video_link(raw: Any, allowed_ids: set[str]) -> Optional[dict[str, Any]]:
@@ -354,7 +356,7 @@ async def enrich_competitive_job_youtube_insights(
         )
 
     allowed_ids = {str(it.get("video_id")) for it in search_items if it.get("video_id")}
-    allowed_asins = {str(c["asin"]).upper() for c in competitors}
+    allowed_names = {str(c["product_name"]).casefold() for c in competitors if str(c.get("product_name") or "").strip()}
 
     bundle = {
         "youtube_search_query_used": search_query,
@@ -405,7 +407,7 @@ async def enrich_competitive_job_youtube_insights(
     mentions_raw = claude_out.get("competitor_mentions") or []
     mentions = []
     for item in mentions_raw:
-        norm = _normalize_mention(item, allowed_asins)
+        norm = _normalize_mention(item, allowed_names)
         if norm:
             mentions.append(norm)
 

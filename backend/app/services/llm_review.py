@@ -55,7 +55,15 @@ def extract_json_blob(text: str) -> dict[str, Any]:
     stripped = text.strip()
     fm = _JSON_FENCE_RE.search(stripped)
     payload = fm.group(1) if fm else stripped
-    return json.loads(payload)
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        # Claude may prepend/explain before JSON; recover first object block.
+        first = payload.find("{")
+        last = payload.rfind("}")
+        if first != -1 and last != -1 and last > first:
+            return json.loads(payload[first : last + 1])
+        raise
 
 
 def _normalize_key_purchase_criteria(raw: Any) -> list[str]:
@@ -256,9 +264,10 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
         try:
             data = extract_json_blob(raw_txt or "{}")
         except json.JSONDecodeError:
+            kp_fallback = _fallback_key_purchase_criteria_from_reviews(review_lines)
             return CompetitiveReviewSynthesis(
                 final_summary=(raw_txt or "Unparseable Claude response.")[:65000],
-                key_purchase_criteria=[],
+                key_purchase_criteria=kp_fallback,
                 why_buyers_like=None,
                 why_buyers_caution=None,
             )

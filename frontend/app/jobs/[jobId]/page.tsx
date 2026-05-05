@@ -723,15 +723,15 @@ export default function JobInsightPage() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
                     <tr>
-                      <th className="px-3 py-2">ASIN</th>
+                      <th className="px-3 py-2">Product</th>
                       <th className="px-3 py-2 text-right">Mentions</th>
                       <th className="px-3 py-2">Example titles</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
                     {youtubeInsights.competitor_mentions.map((row) => (
-                      <tr key={row.asin}>
-                        <td className="px-3 py-2 font-mono text-xs">{row.asin}</td>
+                      <tr key={row.product_name}>
+                        <td className="px-3 py-2 text-xs">{row.product_name}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{row.mention_count}</td>
                         <td className="px-3 py-2 text-zinc-600">
                           {(row.examples ?? []).slice(0, 3).join(" · ") || "—"}
