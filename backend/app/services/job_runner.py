@@ -210,12 +210,13 @@ async def _ingest_reviews_competitive(
 ) -> int:
     target = max(1, settings.competitive_reviews_per_asin)
     buffer_cap = max(target, settings.competitive_review_fetch_buffer)
+    max_buffer_cap = max(buffer_cap, target * 3)
     buffer: list[tuple[int, NormalizedReview]] = []
     seq = 0
     page = 1
     empty_pages = 0
 
-    while len(buffer) < buffer_cap:
+    while len(buffer) < max_buffer_cap:
         rows, next_token = await provider.fetch_reviews_page(asin, amazon_domain, str(page))
         if not rows:
             empty_pages += 1
@@ -232,12 +233,13 @@ async def _ingest_reviews_competitive(
             buffer.append((seq, rv))
             seq += 1
             seen_ids.add(rv.external_id)
-            if len(buffer) >= buffer_cap:
+            if len(buffer) >= max_buffer_cap:
                 break
 
         session.commit()
 
-        if len(buffer) >= buffer_cap:
+        textful = sum(1 for _s, rv in buffer if _normalized_review_has_meaningful_text(rv))
+        if len(buffer) >= buffer_cap and textful >= target:
             break
         if next_token and next_token.isdigit():
             page = max(1, int(next_token))
@@ -246,25 +248,7 @@ async def _ingest_reviews_competitive(
         if page > 40:
             break
 
-    def _rv_sort_key(item: tuple[int, NormalizedReview]) -> tuple[int, float, int]:
-        seq, rv = item
-        ts = 0.0
-        raw = (rv.review_date or "").strip()[:48]
-        if raw:
-            for fmt in ("%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%b %d, %Y", "%d %b %Y"):
-                try:
-                    dt = datetime.strptime(raw, fmt)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    ts = dt.timestamp()
-                    break
-                except ValueError:
-                    continue
-        has_img = int(bool(getattr(rv, "has_customer_images", False)))
-        return (has_img, ts, -seq)
-
-    buffer.sort(key=_rv_sort_key, reverse=True)
-    chosen = buffer[:target]
+    chosen = _choose_competitive_review_candidates(buffer, target)
 
     persisted = 0
     for _idx, rv in chosen:
@@ -297,6 +281,53 @@ async def _ingest_reviews_competitive(
 
     session.commit()
     return persisted
+
+
+def _normalized_review_has_meaningful_text(rv: NormalizedReview) -> bool:
+    text = f"{(rv.title or '').strip()} {(rv.body or '').strip()}".strip()
+    return len(text) >= 12
+
+
+def _normalized_review_timestamp(rv: NormalizedReview) -> float:
+    ts = 0.0
+    raw = (rv.review_date or "").strip()[:48]
+    if raw:
+        for fmt in ("%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%b %d, %Y", "%d %b %Y"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                ts = dt.timestamp()
+                break
+            except ValueError:
+                continue
+    return ts
+
+
+def _choose_competitive_review_candidates(
+    buffer: list[tuple[int, NormalizedReview]], target: int,
+) -> list[tuple[int, NormalizedReview]]:
+    def _rv_sort_key(item: tuple[int, NormalizedReview]) -> tuple[int, float, int]:
+        seq, rv = item
+        has_img = int(bool(getattr(rv, "has_customer_images", False)))
+        return (has_img, _normalized_review_timestamp(rv), -seq)
+
+    target = max(1, target)
+    textful = [item for item in buffer if _normalized_review_has_meaningful_text(item[1])]
+    textful_sorted = sorted(textful, key=_rv_sort_key, reverse=True)
+    chosen = textful_sorted[:target]
+    if len(chosen) >= target:
+        return chosen
+
+    chosen_ids = {rv.external_id for _s, rv in chosen}
+    remaining = [
+        item for item in sorted(buffer, key=_rv_sort_key, reverse=True) if item[1].external_id not in chosen_ids
+    ]
+    for item in remaining:
+        chosen.append(item)
+        if len(chosen) >= target:
+            break
+    return chosen
 
 
 def _review_row_has_meaningful_text(r: Review) -> bool:
