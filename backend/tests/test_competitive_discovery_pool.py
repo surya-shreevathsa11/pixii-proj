@@ -9,8 +9,8 @@ class TestMockDiscoveryPool(unittest.IsolatedAsyncioTestCase):
         from app.services.scraping.mock import MockScrapingProvider
 
         p = MockScrapingProvider()
-        out = await p.discover_competitor_asins("B0TEST0001", "amazon.com", 9)
-        self.assertEqual(len(out), 9)
+        out = await p.discover_competitor_asins("B0TEST0001", "amazon.com", 10)
+        self.assertEqual(len(out), 10)
         self.assertNotIn("B0TEST0001", out)
 
     async def test_candidate_pool_expands_return_count(self) -> None:
@@ -20,7 +20,7 @@ class TestMockDiscoveryPool(unittest.IsolatedAsyncioTestCase):
         out = await p.discover_competitor_asins(
             "B0POOL0001",
             "amazon.com",
-            9,
+            10,
             candidate_pool_limit=30,
         )
         self.assertEqual(len(out), 30)
@@ -35,14 +35,14 @@ class TestMockDiscoveryPool(unittest.IsolatedAsyncioTestCase):
 
 
 class TestListingSliceCap(unittest.TestCase):
-    def test_auto_discover_pool_caps_at_ten_listings(self) -> None:
+    def test_auto_discover_pool_caps_at_eleven_listings(self) -> None:
         target_asins_n = 43
-        slice_cap = min(10, max(1, target_asins_n))
-        self.assertEqual(slice_cap, 10)
+        slice_cap = min(11, max(1, target_asins_n))
+        self.assertEqual(slice_cap, 11)
 
     def test_manual_small_job_uses_submitted_count(self) -> None:
         target_asins_n = 4
-        slice_cap = min(10, max(1, target_asins_n))
+        slice_cap = min(11, max(1, target_asins_n))
         self.assertEqual(slice_cap, 4)
 
 

@@ -549,13 +549,13 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     primary = target_asins[0]
                     job.phase = "Discovering similar ASINs"
                     persist_job_touch(session, job)
-                    pool_lim = max(9, settings.competitive_discovery_pool_limit)
+                    pool_lim = max(10, settings.competitive_discovery_pool_limit)
                     extras: list[str] = []
                     try:
                         extras = await provider.discover_competitor_asins(
                             primary,
                             amazon_domain,
-                            9,
+                            10,
                             candidate_pool_limit=pool_lim,
                             spec=comparison_spec,
                         )
@@ -671,9 +671,9 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 persist_job_touch(session, job)
 
             # If strict gates produced too few peers, backfill from deferred candidates so
-            # the UI can still compare near-target count (up to nine competitors).
+            # the UI can still compare near-target count (up to ten competitors).
             if job.flow == JobFlow.competitive and staged:
-                desired_total = min(10, max(1, len(target_asins)))
+                desired_total = min(11, max(1, len(target_asins)))
                 present = {a.upper() for a, _ in staged}
                 for asin, nl in relaxed_backfill:
                     ua = asin.upper()
@@ -744,8 +744,8 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     return abs(math.log(comp_inr / primary_inr))
 
                 price_filtered.sort(key=_price_distance)
-                # Cap at ten ASINs (primary + nine competitors). Pool may be larger so filters can refill peers.
-                slice_cap = min(10, max(1, len(target_asins)))
+                # Cap at eleven ASINs (primary + ten competitors). Pool may be larger so filters can refill peers.
+                slice_cap = min(11, max(1, len(target_asins)))
                 staged = [primary_pair, *price_filtered][:slice_cap]
 
             # Pass 3: persist Listing rows for the survivors and clean up any orphaned rows

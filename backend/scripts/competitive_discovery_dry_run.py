@@ -31,7 +31,7 @@ async def _run(asin: str, domain: str) -> None:
 
     dom = normalize_amazon_domain(domain)
     provider = get_scraping_provider()
-    pool_lim = max(9, settings.competitive_discovery_pool_limit)
+    pool_lim = max(10, settings.competitive_discovery_pool_limit)
     rows = await provider.discover_competitor_asins(
         asin.strip().upper(),
         dom,

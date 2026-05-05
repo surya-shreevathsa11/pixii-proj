@@ -62,7 +62,7 @@ export default function CompetitiveWorkspace() {
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">SKU + rivals console</h1>
         <p className="leading-relaxed text-zinc-600">
           Enter your product URL or ASIN. By default we pull related ASINs from Amazon&apos;s product page (similar / sponsored
-          widgets), then harvest listings and reviews. Turn that off to paste up to nine competitor URLs yourself. The analysis page
+          widgets), then harvest listings and reviews. Turn that off to paste up to ten competitor URLs yourself. The analysis page
           polls the API while the worker runs; Claude map→reduce needs <code className="rounded bg-zinc-100 px-1 text-xs">ANTHROPIC_API_KEY</code>{" "}
           when configured.
         </p>
@@ -121,9 +121,9 @@ export default function CompetitiveWorkspace() {
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor="rivals" className="text-sm font-medium text-zinc-700">
-                Competitors (one Amazon URL or ASIN per line, max nine)
+                Competitors (one Amazon URL or ASIN per line, max ten)
               </label>
-              <span className="shrink-0 text-xs uppercase tracking-[0.2em] text-zinc-500">{parsedRivals.length}/9</span>
+              <span className="shrink-0 text-xs uppercase tracking-[0.2em] text-zinc-500">{parsedRivals.length}/10</span>
             </div>
             <textarea
               id="rivals"

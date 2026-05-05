@@ -67,10 +67,10 @@ def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto
             seen.add(ua)
             output.append(ua)
 
-        if len(output) >= 9:
+        if len(output) >= 10:
             break
 
-    return [mine.upper(), *output[:9]]
+    return [mine.upper(), *output[:10]]
 
 
 def _resolved_job_amazon_domain(job: Job) -> str:
@@ -176,6 +176,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
             logger.warning("Invalid youtube_insights JSON for job %s", job.id)
 
     market_order: dict[str, int] = {(a or "").upper(): idx for idx, a in enumerate(job.asins or [])}
+    competitive_order: dict[str, int] = {(a or "").upper(): idx for idx, a in enumerate(job.asins or [])}
     if job.flow == JobFlow.market and market_order:
         listings_sorted = sorted(
             listings_out,
@@ -183,6 +184,12 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
                 market_order.get((listing.asin or "").upper(), 10_000),
                 listing.bsr_rank if listing.bsr_rank is not None else 10_000_000,
             ),
+        )
+    elif job.flow == JobFlow.competitive and competitive_order:
+        # Keep user-searched primary product first, then preserve runner-selected order.
+        listings_sorted = sorted(
+            listings_out,
+            key=lambda listing: competitive_order.get((listing.asin or "").upper(), 10_000),
         )
     else:
         listings_sorted = sorted(listings_out, key=lambda listing: -(listing.estimated_monthly_revenue or 0.0))

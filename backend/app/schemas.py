@@ -19,8 +19,8 @@ class CompetitiveJobCreate(BaseModel):
     @classmethod
     def sanitize_competitors(cls, value: list[str]) -> list[str]:
         cleaned = [item.strip() for item in value if item and item.strip()]
-        if len(cleaned) > 9:
-            raise ValueError("Provide at most nine competitor URLs.")
+        if len(cleaned) > 10:
+            raise ValueError("Provide at most ten competitor URLs.")
         return cleaned
 
     @model_validator(mode="after")
