@@ -7,6 +7,7 @@ import {
   ANALYSIS_HISTORY_CHANGED,
   clearAnalysisHistory,
   loadAnalysisHistory,
+  removeAnalysisHistoryEntry,
   type AnalysisHistoryEntry,
 } from "@/lib/analysisHistory";
 
@@ -66,6 +67,11 @@ export function RecentAnalyses() {
     setItems([]);
   };
 
+  const onRemoveOne = (jobId: string) => {
+    removeAnalysisHistoryEntry(jobId);
+    setItems((prev) => prev.filter((entry) => entry.jobId !== jobId));
+  };
+
   if (items.length === 0) {
     return (
       <aside className="rounded-xl border border-dashed border-orange-200 bg-orange-50/40 px-4 py-3 text-sm text-zinc-600" aria-label="Recent analyses">
@@ -99,22 +105,30 @@ export function RecentAnalyses() {
       <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto text-sm">
         {items.map((row) => (
           <li key={row.jobId}>
-            <Link
-              href={`/jobs/${row.jobId}`}
-              className="block rounded-lg border border-transparent px-2 py-1.5 transition hover:border-orange-200 hover:bg-orange-50/40"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                    row.flow === "market" ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"
-                  }`}
-                >
-                  {flowBadge(row.flow)}
-                </span>
-                <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{row.label}</span>
+            <div className="group flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition hover:border-orange-200 hover:bg-orange-50/40">
+              <Link href={`/jobs/${row.jobId}`} className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      row.flow === "market" ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"
+                    }`}
+                  >
+                    {flowBadge(row.flow)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{row.label}</span>
+                </div>
+                <div className="mt-0.5 text-xs text-zinc-500">{formatRelativeTime(row.createdAt)}</div>
+              </Link>
+              <button
+                type="button"
+                onClick={() => onRemoveOne(row.jobId)}
+                aria-label={`Delete history for ${row.label}`}
+                className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-zinc-500 opacity-70 transition hover:bg-orange-100 hover:text-orange-800 group-hover:opacity-100"
+                title="Delete this history item"
+              >
+                Delete
+              </button>
               </div>
-              <div className="mt-0.5 text-xs text-zinc-500">{formatRelativeTime(row.createdAt)}</div>
-            </Link>
           </li>
         ))}
       </ul>

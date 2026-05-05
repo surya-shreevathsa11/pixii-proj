@@ -135,3 +135,16 @@ export function clearAnalysisHistory(): void {
     /* ignore */
   }
 }
+
+export function removeAnalysisHistoryEntry(jobId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const key = jobId.trim();
+  if (!isValidUuid(key)) {
+    return;
+  }
+  const prev = loadAnalysisHistory();
+  const next = prev.filter((e) => e.jobId !== key);
+  persist(next);
+}
