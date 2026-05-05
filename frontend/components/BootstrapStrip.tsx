@@ -14,7 +14,7 @@ function isLiveScraping(provider: string): boolean {
 export function BootstrapStrip() {
   const [dismissed, setDismissed] = useState(false);
   const [mock, setMock] = useState<boolean | null>(null);
-  const [gemini, setGemini] = useState<boolean | null>(null);
+  const [claude, setClaude] = useState<boolean | null>(null);
   const [youtube, setYoutube] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -34,13 +34,13 @@ export function BootstrapStrip() {
         const data = await fetchBootstrap();
         if (!cancelled) {
           setMock(!isLiveScraping(data.scraping_provider));
-          setGemini(data.gemini_configured);
+          setClaude(data.claude_configured);
           setYoutube(data.youtube_configured ?? false);
         }
       } catch {
         if (!cancelled) {
           setMock(null);
-          setGemini(null);
+          setClaude(null);
           setYoutube(null);
         }
       }
@@ -59,11 +59,11 @@ export function BootstrapStrip() {
     }
   };
 
-  if (dismissed || mock === null || gemini === null || youtube === null) {
+  if (dismissed || mock === null || claude === null || youtube === null) {
     return null;
   }
 
-  if (!mock && gemini && youtube) {
+  if (!mock && claude && youtube) {
     return null;
   }
 
@@ -83,13 +83,13 @@ export function BootstrapStrip() {
               <code className="rounded bg-amber-100/80 px-1 py-0.5 text-xs">backend/.env</code>, then restart the server.
             </p>
           ) : null}
-          {!mock && gemini === false ? (
+          {!mock && claude === false ? (
             <p>
-              <span className="font-semibold">Gemini off:</span> add <code className="rounded bg-amber-100/80 px-1 py-0.5 text-xs">GOOGLE_API_KEY</code>{" "}
+              <span className="font-semibold">Claude off:</span> add <code className="rounded bg-amber-100/80 px-1 py-0.5 text-xs">ANTHROPIC_API_KEY</code>{" "}
               for live map→reduce narratives on competitive jobs; otherwise summaries use built-in stubs.
             </p>
           ) : null}
-          {!mock && gemini && youtube === false ? (
+          {!mock && claude && youtube === false ? (
             <p>
               <span className="font-semibold">YouTube appendix off:</span> add{" "}
               <code className="rounded bg-amber-100/80 px-1 py-0.5 text-xs">YOUTUBE_DATA_API_KEY</code> for competitive YouTube

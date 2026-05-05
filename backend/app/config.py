@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     scraperapi_render_timeout_seconds: float = 300.0
     amazon_domain: str = "amazon.com"
 
-    google_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
 
     # YouTube Data API v3 (optional). search.list costs ~100 quota units per call.
     youtube_data_api_key: str = ""

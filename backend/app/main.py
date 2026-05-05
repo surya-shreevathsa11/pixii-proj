@@ -55,6 +55,6 @@ def health():
 def bootstrap():
     return BootstrapResponse(
         scraping_provider=settings.scraping_provider,
-        gemini_configured=bool(settings.google_api_key.strip()),
+        claude_configured=bool(settings.anthropic_api_key.strip()),
         youtube_configured=bool(settings.youtube_data_api_key.strip() or settings.youtube_data_fallback_api_key.strip()),
     )

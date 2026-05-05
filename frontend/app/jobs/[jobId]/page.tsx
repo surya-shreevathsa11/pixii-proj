@@ -250,7 +250,7 @@ export default function JobInsightPage() {
 
   const openerAsin = job?.listings[0]?.asin;
   const ingestDemo = job?.ingest_demo ?? false;
-  const geminiConfigured = job?.gemini_configured ?? false;
+  const claudeConfigured = job?.claude_configured ?? false;
   const youtubeConfigured = job?.youtube_configured ?? false;
   const youtubeInsights = job?.youtube_insights ?? null;
   const isActive = job && (job.status === "queued" || job.status === "running");
@@ -324,11 +324,11 @@ export default function JobInsightPage() {
         </div>
       ) : null}
 
-      {job?.flow === "competitive" && !geminiConfigured ? (
+      {job?.flow === "competitive" && !claudeConfigured ? (
         <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800" role="status">
-          <p className="font-semibold">Gemini not configured on the server</p>
+          <p className="font-semibold">Claude not configured on the server</p>
           <p className="mt-1 text-zinc-700">
-            Dossiers below use offline stubs until you set <code className="rounded bg-white px-1 text-xs">GOOGLE_API_KEY</code>{" "}
+            Dossiers below use offline stubs until you set <code className="rounded bg-white px-1 text-xs">ANTHROPIC_API_KEY</code>{" "}
             and restart the API.
           </p>
         </div>
@@ -557,7 +557,7 @@ export default function JobInsightPage() {
                         Key Purchase Criteria
                       </h3>
                       <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
-                        Why customers buy this product, synthesized by Gemini from the {asinReviews.length} synced
+                        Why customers buy this product, synthesized by Claude from the {asinReviews.length} synced
                         review {asinReviews.length === 1 ? "snippet" : "snippets"} below.
                       </p>
                       {summary?.key_purchase_criteria?.length ? (
@@ -577,8 +577,8 @@ export default function JobInsightPage() {
                           {summary?.final_summary
                             ? summary.final_summary
                             : asinReviews.length === 0
-                            ? "No reviews were synced for this ASIN, so Gemini could not extract purchase criteria. See the help below the reviews list."
-                            : "Gemini synthesis is still in flight or returned nothing yet. Re-running the analysis usually fixes a transient quota error."}
+                            ? "No reviews were synced for this ASIN, so Claude could not extract purchase criteria. See the help below the reviews list."
+                            : "Claude synthesis is still in flight or returned nothing yet. Re-running the analysis usually fixes a transient quota error."}
                         </p>
                       ) : null}
                     </article>
@@ -650,7 +650,7 @@ export default function JobInsightPage() {
           <h2 className="text-xl font-semibold">YouTube demand &amp; review coverage</h2>
           <p className="text-sm text-zinc-600">
             Optional appendix from YouTube Data API v3 (search + video metadata + a small comment sample), summarized by
-            Gemini when <code className="rounded bg-zinc-100 px-1 text-xs">GOOGLE_API_KEY</code> is set. Query is derived from
+            Claude when <code className="rounded bg-zinc-100 px-1 text-xs">ANTHROPIC_API_KEY</code> is set. Query is derived from
             your primary listing title and competitor titles.
           </p>
           {!youtubeConfigured ? (
@@ -702,7 +702,7 @@ export default function JobInsightPage() {
             </div>
           ) : youtubeConfigured && job.status === "completed" && !youtubeInsights?.error ? (
             <p className="text-sm text-zinc-600">
-              Scores were not computed for this run (Gemini may be off or returned empty). Review links below may still
+              Scores were not computed for this run (Claude may be off or returned empty). Review links below may still
               reflect search ranking.
             </p>
           ) : null}

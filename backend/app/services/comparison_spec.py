@@ -1,6 +1,6 @@
-"""Gemini-driven comparison spec for competitor discovery.
+"""Claude-driven comparison spec for competitor discovery.
 
-Given the primary product's title (and optional category breadcrumb), one Gemini
+Given the primary product's title (and optional category breadcrumb), one Claude
 call returns a structured spec the discovery pipeline uses:
 
 - ``query``           - the Amazon SERP keyword the discovery should search for
@@ -10,7 +10,7 @@ call returns a structured spec the discovery pipeline uses:
 - ``must_not_match``  - lower-case substrings that disqualify a candidate.
 - ``rationale``       - one-sentence explanation, used in logs.
 
-All errors / unset GOOGLE_API_KEY return ``None`` and the caller falls back to
+All errors / unset ANTHROPIC_API_KEY return ``None`` and the caller falls back to
 the existing regex heuristic. Network/parse failures never raise.
 """
 from __future__ import annotations
@@ -22,10 +22,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-import google.generativeai as genai
-
 from app.config import settings
-from app.services.llm_review import _get_gemini_model, _response_text, extract_json_blob
+from app.services.llm_review import extract_json_blob, invoke_claude_text, llm_is_configured
 
 logger = logging.getLogger(__name__)
 
@@ -117,18 +115,14 @@ def _parse_spec(raw: dict[str, Any]) -> Optional[ComparisonSpec]:
 async def infer_comparison_spec(
     title: str, category: Optional[str] = None,
 ) -> Optional[ComparisonSpec]:
-    """One Gemini call returning the comparison spec, or ``None`` on any failure.
+    """One Claude call returning the comparison spec, or ``None`` on any failure.
 
     Caller is expected to fall back to its existing heuristic when ``None`` is returned.
     """
     title = (title or "").strip()
     if not title:
         return None
-    if not settings.google_api_key.strip():
-        return None
-
-    model = _get_gemini_model()
-    if model is None:
+    if not llm_is_configured():
         return None
 
     prompt = _PROMPT_TEMPLATE.format(
@@ -137,18 +131,7 @@ async def infer_comparison_spec(
     )
 
     def _invoke() -> Optional[ComparisonSpec]:
-        rsp = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.1,
-                "max_output_tokens": 512,
-            },
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ],
-        )
-        raw_txt = _response_text(rsp)
+        raw_txt = invoke_claude_text(prompt, max_tokens=512, temperature=0.1)
         if not raw_txt:
             return None
         try:
@@ -162,13 +145,13 @@ async def infer_comparison_spec(
     try:
         spec = await asyncio.to_thread(_invoke)
     except Exception as exc:
-        logger.warning("Gemini comparison-spec call failed: %s: %s", type(exc).__name__, exc)
+        logger.warning("Claude comparison-spec call failed: %s: %s", type(exc).__name__, exc)
         return None
     if spec is None:
-        logger.info("Gemini returned no usable comparison spec for %r; using heuristic.", title[:96])
+        logger.info("Claude returned no usable comparison spec for %r; using heuristic.", title[:96])
     else:
         logger.info(
-            "Gemini comparison spec for %r → query=%r must_match=%s must_not_match=%s",
+            "Claude comparison spec for %r → query=%r must_match=%s must_not_match=%s",
             title[:96], spec.query, spec.must_match, spec.must_not_match,
         )
     return spec

@@ -74,13 +74,17 @@ class TestFetchListingRenderRetry(unittest.IsolatedAsyncioTestCase):
         calls: list[dict] = []
 
         async def stub(target_url, amazon_domain=None, raise_on_error=False, *, force_render=False):
-            calls.append({"force_render": force_render})
+            calls.append({"force_render": force_render, "amazon_domain": amazon_domain})
             return target_url, "", 504
 
         provider._fetch_html_lenient = stub  # type: ignore[assignment]
 
         listing = await provider.fetch_listing("B0FAILED01", "amazon.in")
-        self.assertEqual(len(calls), 2, "expected first pass + render retry")
+        self.assertEqual(len(calls), 3, "expected first pass + render retry + geo-relaxed retry")
+        self.assertFalse(calls[0]["force_render"])
+        self.assertTrue(calls[1]["force_render"])
+        self.assertTrue(calls[2]["force_render"])
+        self.assertIsNone(calls[2]["amazon_domain"])
         self.assertEqual(listing.title, "")
         self.assertIsNone(listing.price)
         self.assertIsNone(listing.bsr_rank)

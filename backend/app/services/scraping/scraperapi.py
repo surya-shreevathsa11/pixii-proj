@@ -910,15 +910,24 @@ class ScraperApiScrapingProvider:
         return "\n".join(chunks[:120])
 
     def _extract_bsr(self, soup: BeautifulSoup, html_fallback: str) -> tuple[Optional[int], Optional[str]]:
+        # First try a DOM-first parse from detail bullets/tables; this is less brittle than
+        # global regex and handles modern Amazon layouts where BSR text is fragmented.
+        dom_rank, dom_cat = self._extract_bsr_from_dom(soup)
+        if dom_rank is not None:
+            return dom_rank, dom_cat
+
         mega = self._collect_detail_text(soup)
         if len(mega) < 80:
             mega = (mega + "\n" + html_fallback)[:200_000]
+        mega = mega.replace("\xa0", " ")
 
         patterns = [
             r"Best\s+Sellers\s+Rank[^\n#]*?#([\d,.]+(?:,\d{3})*)\s+(?:in|In)\s+([^\n(#<]{3,160})",
+            r"Bestsellers?\s+Rank[^\n#]*?#([\d,.]+(?:,\d{3})*)\s+(?:in|In)\s+([^\n(#<]{3,160})",
             r"Amazon\s+Best\s*Sellers\s+Rank[^\n#]*?#([\d,.]+(?:,\d{3})*)\s+(?:in|In)\s+([^\n(#<]{3,160})",
             # amazon.in and other locales: looser digit groups (e.g. Indian grouping).
             r"Best\s+Sellers\s+Rank[^\n#]*?#\s*([\d,]+)\s+(?:in|In)\s+([^\n(#<]{3,160})",
+            r"Bestsellers?\s+Rank[^\n#]*?#\s*([\d,]+)\s+(?:in|In)\s+([^\n(#<]{3,160})",
             r"Classement\s+des\s+meilleures\s+ventes[^\n#]*?n[°o]\s*([\d\s]+)\s+en\s+([^(\n<#]{3,160})",
             r"#([\d,.]+(?:,\d{3})*)\s+in\s+([A-Za-zÀ-ÿ0-9 &,'\-]{3,140})",
             r"#\s*([\d,]+)\s+in\s+([A-Za-zÀ-ÿ0-9 &,'\-]{3,140})",
@@ -937,6 +946,70 @@ class ScraperApiScrapingProvider:
                 cat = re.sub(r"\s*\(.*$", "", cat).strip()
                 cat = cat.rstrip(" ,")[:512]
                 return rank, cat or None
+        return None, None
+
+    @staticmethod
+    def _parse_rank_category_pairs(text: str) -> list[tuple[int, str]]:
+        out: list[tuple[int, str]] = []
+        if not text:
+            return out
+        clean = text.replace("\xa0", " ")
+        # Captures strings like "#1,234 in Electronics", including Indian comma formatting.
+        for m in re.finditer(r"#\s*([\d][\d,\.]*)\s+(?:in|In)\s+([^\n(#<]{3,180})", clean):
+            digits = re.sub(r"[^\d]", "", m.group(1))
+            if not digits:
+                continue
+            try:
+                rank = int(digits)
+            except ValueError:
+                continue
+            cat = re.sub(r"\s+", " ", m.group(2).strip())
+            cat = re.sub(r"\s*\(.*$", "", cat).strip().rstrip(" ,")
+            if cat:
+                out.append((rank, cat[:512]))
+        return out
+
+    def _extract_bsr_from_dom(self, soup: BeautifulSoup) -> tuple[Optional[int], Optional[str]]:
+        nodes = []
+        selectors = (
+            "#detailBullets_feature_div",
+            "#detailBulletsWrapper_feature_div",
+            "#productDetails_feature_div",
+            "#prodDetails",
+            "#productDetails_detailBullets_sections1",
+        )
+        for sel in selectors:
+            nodes.extend(soup.select(sel))
+        if not nodes:
+            return None, None
+
+        def _looks_like_bsr_label(t: str) -> bool:
+            low = (t or "").strip().lower()
+            return "best sellers rank" in low or "bestsellers rank" in low or "amazon best sellers rank" in low
+
+        # Table-style layout: <th>Best Sellers Rank</th><td>...</td>
+        for root in nodes:
+            for row in root.select("tr"):
+                th = row.select_one("th")
+                td = row.select_one("td")
+                if not th or not td:
+                    continue
+                if not _looks_like_bsr_label(th.get_text(" ", strip=True)):
+                    continue
+                pairs = self._parse_rank_category_pairs(td.get_text(" ", strip=True))
+                if pairs:
+                    return pairs[0]
+
+        # Bullet-style layout with inline label text.
+        for root in nodes:
+            for li in root.select("li, span.a-list-item"):
+                txt = li.get_text(" ", strip=True)
+                if not _looks_like_bsr_label(txt):
+                    continue
+                pairs = self._parse_rank_category_pairs(txt)
+                if pairs:
+                    return pairs[0]
+
         return None, None
 
     _BREADCRUMB_SKIP = frozenset(
@@ -1249,15 +1322,23 @@ class ScraperApiScrapingProvider:
         # First attempt: respect SCRAPERAPI_RENDER (cheap path when off).
         canonical, html, status = await self._fetch_html_lenient(target, amazon_domain)
 
-        # If the first pass came back empty / 4xx / a non-PDP shell, retry once with
-        # render=true. This covers ScraperAPI 4xx → empty body and Amazon stubs that
-        # don't include #productTitle until JS executes (common on amazon.in).
-        if (status >= 400 or self._is_thin_pdp_html(html)) and not self.render:
+        # Recovery 1: force a render pass when the first response is empty/4xx/thin shell.
+        # This now runs regardless of self.render so a first rendered miss still gets one
+        # more chance (possibly via fallback key path inside _fetch_html_lenient).
+        if status >= 400 or self._is_thin_pdp_html(html):
             canonical_r, html_r, status_r = await self._fetch_html_lenient(
                 target, amazon_domain, force_render=True,
             )
             if status_r < 400 and html_r and not self._is_thin_pdp_html(html_r):
                 canonical, html, status = canonical_r, html_r, status_r
+            else:
+                # Recovery 2: geo-relaxed retry (no pinned amazon_domain country hint).
+                # Helps when storefront-country routing is flaky for a specific proxy hop.
+                canonical_rr, html_rr, status_rr = await self._fetch_html_lenient(
+                    target, None, force_render=True,
+                )
+                if status_rr < 400 and html_rr and not self._is_thin_pdp_html(html_rr):
+                    canonical, html, status = canonical_rr, html_rr, status_rr
 
         if self._looks_like_blocked(html):
             return NormalizedListing(

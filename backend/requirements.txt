@@ -5,5 +5,4 @@ psycopg2-binary==2.9.12
 httpx==0.28.1
 pydantic-settings==2.7.0
 python-multipart==0.0.20
-google-generativeai==0.8.5
 beautifulsoup4==4.13.4

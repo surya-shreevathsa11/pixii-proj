@@ -86,13 +86,13 @@ export interface JobDetailResponse {
   reviews_count_total: number;
   created_at: string;
   ingest_demo: boolean;
-  gemini_configured: boolean;
+  claude_configured: boolean;
   youtube_configured?: boolean;
   youtube_insights?: YouTubeInsights | null;
 }
 
 export interface BootstrapResponse {
   scraping_provider: string;
-  gemini_configured: boolean;
+  claude_configured: boolean;
   youtube_configured?: boolean;
 }

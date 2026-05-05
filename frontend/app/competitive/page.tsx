@@ -63,7 +63,7 @@ export default function CompetitiveWorkspace() {
         <p className="leading-relaxed text-zinc-600">
           Enter your product URL or ASIN. By default we pull related ASINs from Amazon&apos;s product page (similar / sponsored
           widgets), then harvest listings and reviews. Turn that off to paste up to nine competitor URLs yourself. The analysis page
-          polls the API while the worker runs; Gemini map→reduce needs <code className="rounded bg-zinc-100 px-1 text-xs">GOOGLE_API_KEY</code>{" "}
+          polls the API while the worker runs; Claude map→reduce needs <code className="rounded bg-zinc-100 px-1 text-xs">ANTHROPIC_API_KEY</code>{" "}
           when configured.
         </p>
       </header>
@@ -145,7 +145,7 @@ export default function CompetitiveWorkspace() {
           Live PDPs and reviews require <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">SCRAPING_PROVIDER=scraperapi</code> and{" "}
           <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">SCRAPING_API_KEY</code> in <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">backend/.env</code>.
           Competitive analysis keeps up to <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">COMPETITIVE_REVIEWS_PER_ASIN</code> reviews per ASIN (photo-tagged rows are ranked first when available).
-          <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">GOOGLE_API_KEY</code> enables full Gemini narratives; without it, the analysis page shows fallback summaries.
+          <code className="rounded bg-zinc-100 px-1 py-0.5 text-[11px]">ANTHROPIC_API_KEY</code> enables full Claude narratives; without it, the analysis page shows fallback summaries.
         </p>
 
         {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}

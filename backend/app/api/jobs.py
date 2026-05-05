@@ -162,7 +162,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
     competitor_urls = job.competitor_urls or []
 
     ingest_demo = _ingest_demo_from_listings(list(listings_rows))
-    gemini_configured = bool(settings.google_api_key.strip())
+    claude_configured = bool(settings.anthropic_api_key.strip())
     youtube_configured = bool(
         settings.youtube_data_api_key.strip() or settings.youtube_data_fallback_api_key.strip()
     )
@@ -193,7 +193,7 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         reviews_count_total=len(reviews_total),
         created_at=job.created_at,
         ingest_demo=ingest_demo,
-        gemini_configured=gemini_configured,
+        claude_configured=claude_configured,
         youtube_configured=youtube_configured,
         youtube_insights=youtube_insights_out,
     )

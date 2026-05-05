@@ -300,7 +300,7 @@ async def _ingest_reviews_competitive(
 
 
 def _review_row_has_meaningful_text(r: Review) -> bool:
-    """True when title or body has enough characters for Gemini to quote themes."""
+    """True when title or body has enough characters for Claude to quote themes."""
     text = f"{(r.title or '').strip()} {(r.body or '').strip()}".strip()
     return len(text) >= 12
 
@@ -374,7 +374,7 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
                 map_batches=[],
                 final_summary=(
                     f"Synced {len(reviews_rows)} review row(s) for {asin}, but none contained usable text "
-                    "(empty titles and bodies—often a scrape or render issue). Skipped Gemini to save quota. "
+                    "(empty titles and bodies—often a scrape or render issue). Skipped Claude to save quota. "
                     "Try SCRAPERAPI_RENDER=true and re-run."
                 ),
                 key_purchase_criteria=[
@@ -450,7 +450,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     raise ValueError("No ASINs supplied for competitive job")
 
             # Fetch primary listing up-front for competitive jobs so the comparison spec
-            # (Gemini-driven) and downstream filters use the canonical PDP title/category.
+            # (Claude-driven) and downstream filters use the canonical PDP title/category.
             # Cached to avoid re-fetching during pass 1.
             primary_nl_cache: NormalizedListing | None = None
             primary_title_for_filter: str = ""
@@ -588,7 +588,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                         persist_job_touch(session, job)
                         continue
                     if comparison_spec is not None and not comparison_spec.title_matches(nl.title or ""):
-                        # Gemini-derived must_match / must_not_match veto: e.g. "iPhone 17 Pro"
+                        # Claude-derived must_match / must_not_match veto: e.g. "iPhone 17 Pro"
                         # tile bleeding into an "iPhone 17" comparison set.
                         job.phase = f"Skipped off-spec listing {asin}"
                         persist_job_touch(session, job)
@@ -775,14 +775,14 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 job.phase = "LLM aggregation"
                 persist_job_touch(session, job)
 
-                # Space Gemini calls so free-tier per-minute quotas are less likely to trip when
+                # Space Claude calls so free-tier per-minute quotas are less likely to trip when
                 # summarizing many ASINs back-to-back (ResourceExhausted).
                 _GEMINI_INTER_ASIN_DELAY_S = 4.5
 
                 for sidx, asin in enumerate(target_asins, start=1):
                     job.phase = f"Summarizing reviews ({sidx}/{total or 1})"
                     persist_job_touch(session, job)
-                    if sidx > 1 and settings.google_api_key.strip():
+                    if sidx > 1 and settings.anthropic_api_key.strip():
                         await asyncio.sleep(_GEMINI_INTER_ASIN_DELAY_S)
                     await summarize_asin(job, asin, session)
 

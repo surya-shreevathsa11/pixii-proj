@@ -80,7 +80,7 @@ SCRAPING_API_KEY=your_scraperapi_key
 # Leave SCRAPERAPI_COUNTRY_CODE empty for multi-region; uncomment to lock proxy geo:
 # SCRAPERAPI_COUNTRY_CODE=us
 # Optional Gemini for review summaries:
-# GOOGLE_API_KEY=your_gemini_key
+# ANTHROPIC_API_KEY=your_gemini_key
 ```
 
 Start **uvicorn from `backend/`** so `backend/.env` is loaded reliably:

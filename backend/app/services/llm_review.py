@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import google.generativeai as genai
+import httpx
 
 from app.config import settings
 
@@ -13,8 +13,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-_MODEL_STATE: dict[str, Any | None] = {"fingerprint": None, "handle": None}
-_CONFIGURE_KEY: list[str | None] = [None]
+_ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
 
 # Patterns that indicate a transient (worth retrying) failure vs a hard one.
 _TRANSIENT_ERROR_RX = re.compile(
@@ -44,47 +43,8 @@ def _is_quota_error(exc: BaseException) -> bool:
     return bool(_QUOTA_ERROR_RX.search(msg))
 
 
-def _get_gemini_model() -> genai.GenerativeModel | None:
-    key = settings.google_api_key.strip()
-    fingerprint = f"{key}:{settings.gemini_model}"
-
-    if not key:
-        _MODEL_STATE["handle"] = None
-        _MODEL_STATE["fingerprint"] = fingerprint
-        return None
-
-    cached = _MODEL_STATE.get("handle")
-    if cached and _MODEL_STATE.get("fingerprint") == fingerprint and isinstance(cached, genai.GenerativeModel):
-        return cached
-
-    if _CONFIGURE_KEY[0] != key:
-        genai.configure(api_key=key)
-        _CONFIGURE_KEY[0] = key
-
-    preferred = settings.gemini_model.strip()
-    fallbacks = [preferred, "gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest"]
-
-    tried: set[str] = set()
-    last_error: Exception | None = None
-    for name in fallbacks:
-        model_name = name.strip()
-        if not model_name or model_name in tried:
-            continue
-        tried.add(model_name)
-
-        try:
-            model_handle = genai.GenerativeModel(model_name)
-            _MODEL_STATE["handle"] = model_handle
-            _MODEL_STATE["fingerprint"] = fingerprint
-            return model_handle
-        except Exception as exc:
-            last_error = exc
-            continue
-
-    logger.warning("Gemini unavailable: %s", last_error)
-    _MODEL_STATE["handle"] = None
-    _MODEL_STATE["fingerprint"] = fingerprint
-    return None
+def llm_is_configured() -> bool:
+    return bool(settings.anthropic_api_key.strip())
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
@@ -118,7 +78,7 @@ def _normalize_key_purchase_criteria(raw: Any) -> list[str]:
 
 def _fallback_key_purchase_criteria_from_reviews(review_lines: list[str], limit: int = 8) -> list[str]:
     """
-    Deterministic fallback when Gemini output is malformed:
+    Deterministic fallback when Claude output is malformed:
     emit concise shopper-language snippets from review text.
     """
     picks: list[str] = []
@@ -143,26 +103,35 @@ def _fallback_key_purchase_criteria_from_reviews(review_lines: list[str], limit:
     return picks
 
 
-def _response_text(rsp: Any) -> str:
-    try:
-        return (rsp.text or "").strip()
-    except Exception:
-        parts: list[str] = []
-        for cand in getattr(rsp, "candidates", None) or []:
-            content = getattr(cand, "content", None)
-            if not content:
-                continue
-            for part in getattr(content, "parts", None) or []:
-                txt = getattr(part, "text", "") or ""
-                if txt:
-                    parts.append(txt)
-        return "".join(parts).strip()
+def invoke_claude_text(prompt: str, *, max_tokens: int, temperature: float = 0.2) -> str:
+    key = settings.anthropic_api_key.strip()
+    if not key:
+        raise RuntimeError("Anthropic API key missing")
+    model = (settings.anthropic_model or "").strip() or "claude-haiku-4-5-20251001"
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    with httpx.Client(timeout=120.0) as client:
+        rsp = client.post(_ANTHROPIC_API, json=payload, headers=headers)
+    rsp.raise_for_status()
+    data = rsp.json()
+    parts = data.get("content") or []
+    txts = [str(p.get("text") or "") for p in parts if isinstance(p, dict) and p.get("type") == "text"]
+    return "".join(txts).strip()
 
 
 async def batch_map_review_themes(product_title: str, batch_lines: list[str]) -> dict[str, Any]:
-    model = _get_gemini_model()
+    model_on = llm_is_configured()
     text_blob = "\n".join(batch_lines[:8000])
-    if not model:
+    if not model_on:
         return build_stub_map(product_title)
 
     prompt = f"""You summarize Amazon shopper feedback.
@@ -193,20 +162,7 @@ Rules:
 """
 
     def _invoke() -> dict[str, Any]:
-        rsp = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 2048,
-                "response_mime_type": "application/json",
-            },
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ],
-        )
-
-        raw_txt = _response_text(rsp)
+        raw_txt = invoke_claude_text(prompt, max_tokens=2048, temperature=0.2)
 
         cleaned = extract_json_blob(raw_txt) if raw_txt else {}
         cleaned.setdefault("themes", [])
@@ -242,9 +198,9 @@ def _single_pass_corpus_has_text(review_lines: list[str]) -> bool:
 async def synthesize_reviews_single_pass(
     asin: str, product_title: str, review_lines: list[str],
 ) -> CompetitiveReviewSynthesis:
-    """One Gemini call for a small corpus (competitive jobs, ≤10 reviews)."""
-    model = _get_gemini_model()
-    # Star-only rows (Amazon returned ratings but empty bodies) must not hit Gemini: it burns
+    """One Claude call for a small corpus (competitive jobs, ≤10 reviews)."""
+    model_on = llm_is_configured()
+    # Star-only rows (Amazon returned ratings but empty bodies) must not hit Claude: it burns
     # quota and often returns long non-JSON essays about "absence of data" instead of useful KPC.
     if not _single_pass_corpus_has_text(review_lines):
         n = len(review_lines)
@@ -284,10 +240,10 @@ Return strict JSON ONLY (no markdown) with keys:
 Ground every theme in the provided review lines; do not invent specs not hinted at in the text.
 """
 
-    if not model:
+    if not model_on:
         return CompetitiveReviewSynthesis(
             final_summary=(
-                "Gemini unavailable; set GOOGLE_API_KEY for single-pass review synthesis. "
+                "Claude unavailable; set ANTHROPIC_API_KEY for single-pass review synthesis. "
                 f"Captured {len(review_lines)} review snippets for {asin}."
             ),
             key_purchase_criteria=[],
@@ -296,24 +252,12 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
         )
 
     def _invoke() -> CompetitiveReviewSynthesis:
-        rsp = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.25,
-                "max_output_tokens": 4096,
-                "response_mime_type": "application/json",
-            },
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ],
-        )
-        raw_txt = _response_text(rsp)
+        raw_txt = invoke_claude_text(prompt, max_tokens=4096, temperature=0.25)
         try:
             data = extract_json_blob(raw_txt or "{}")
         except json.JSONDecodeError:
             return CompetitiveReviewSynthesis(
-                final_summary=(raw_txt or "Unparseable Gemini response.")[:65000],
+                final_summary=(raw_txt or "Unparseable Claude response.")[:65000],
                 key_purchase_criteria=[],
                 why_buyers_like=None,
                 why_buyers_caution=None,
@@ -347,7 +291,7 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
             transient = _is_transient_error(exc)
             quota = _is_quota_error(exc)
             logger.warning(
-                "Gemini single-pass synthesis failed for %s on attempt %d (transient=%s, quota=%s): %s: %s",
+                "Claude single-pass synthesis failed for %s on attempt %d (transient=%s, quota=%s): %s: %s",
                 asin,
                 attempt + 1,
                 transient,
@@ -364,13 +308,13 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
 
     err_label = type(last_exc).__name__ if last_exc else "UnknownError"
     quota_hint = (
-        " The Gemini free tier hit its per-minute quota; wait ~1 minute and re-run, or set a paid GOOGLE_API_KEY."
+        " Claude quota/rate limit hit; wait and re-run, or increase Anthropic plan capacity."
         if last_exc and _is_quota_error(last_exc)
         else ""
     )
     return CompetitiveReviewSynthesis(
         final_summary=(
-            f"Gemini synthesis unavailable right now ({err_label}).{quota_hint} "
+            f"Claude synthesis unavailable right now ({err_label}).{quota_hint} "
             f"Showing the {len(review_lines)} captured review snippets for {asin} only."
         ),
         key_purchase_criteria=[],
@@ -396,7 +340,7 @@ def build_stub_map(title: str) -> dict[str, Any]:
 
 
 async def reduce_review_map(asin: str, product_title: str, batches: list[dict[str, Any]]) -> tuple[str, list[str]]:
-    model = _get_gemini_model()
+    model_on = llm_is_configured()
 
     condensed: list[dict[str, Any]] = []
     for chunk in batches[:12]:
@@ -415,9 +359,9 @@ Return strict JSON ONLY (no markdown) with keys:
 - key_purchase_criteria: array of 5-12 crisp merchandising bullets an Amazon PDP should highlight.
 """
 
-    if not model:
+    if not model_on:
         return (
-            "Gemini unavailable; provide GOOGLE_API_KEY + compatible network egress for nuanced synthesis.",
+            "Claude unavailable; provide ANTHROPIC_API_KEY + compatible network egress for nuanced synthesis.",
             [
                 "Value vs pack size",
                 "Ingredient/disclosure clarity",
@@ -428,20 +372,7 @@ Return strict JSON ONLY (no markdown) with keys:
         )
 
     def _invoke_reduce() -> tuple[str, list[str]]:
-        rsp = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.35,
-                "max_output_tokens": 4096,
-                "response_mime_type": "application/json",
-            },
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ],
-        )
-
-        raw_txt = _response_text(rsp)
+        raw_txt = invoke_claude_text(prompt, max_tokens=4096, temperature=0.35)
 
         try:
             data = extract_json_blob(raw_txt or "{}")

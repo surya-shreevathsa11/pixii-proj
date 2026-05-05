@@ -79,7 +79,7 @@ class YouTubeCompetitorMentionOut(BaseModel):
 
 
 class YouTubeInsightsOut(BaseModel):
-    """Competitive-job appendix from YouTube Data API v3 + optional Gemini consolidation."""
+    """Competitive-job appendix from YouTube Data API v3 + optional Claude consolidation."""
 
     product_display_name: Optional[str] = None
     youtube_search_query_used: Optional[str] = None
@@ -122,12 +122,12 @@ class JobDetailResponse(BaseModel):
     reviews_count_total: int
     created_at: datetime
     ingest_demo: bool = False
-    gemini_configured: bool = False
+    claude_configured: bool = False
     youtube_configured: bool = False
     youtube_insights: Optional[YouTubeInsightsOut] = None
 
 
 class BootstrapResponse(BaseModel):
     scraping_provider: str
-    gemini_configured: bool
+    claude_configured: bool
     youtube_configured: bool = False

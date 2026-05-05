@@ -1,6 +1,6 @@
-"""Tests for the ComparisonSpec dataclass and Gemini-response parser.
+"""Tests for the ComparisonSpec dataclass and Claude-response parser.
 
-The actual Gemini call is not exercised here; we only verify the parser handles
+The actual Claude call is not exercised here; we only verify the parser handles
 well-formed payloads, garbage, and the ``title_matches`` filter that the
 discovery pipeline depends on.
 """
@@ -38,7 +38,7 @@ class TestParseSpec(unittest.TestCase):
         self.assertIsNone(self.parse({"query": "12345"}))
 
     def test_query_too_long_rejected(self) -> None:
-        # We instruct Gemini to keep the query to 3-7 words. Anything over 120 chars
+        # We instruct Claude to keep the query to 3-7 words. Anything over 120 chars
         # likely means it ignored the prompt; reject so the heuristic SERP can run instead.
         spec = self.parse({"query": "abc " + "x" * 200})
         self.assertIsNone(spec)
@@ -107,12 +107,12 @@ class TestInferComparisonSpecGated(unittest.IsolatedAsyncioTestCase):
         from app.config import settings
         from app.services.comparison_spec import infer_comparison_spec
 
-        original = settings.google_api_key
+        original = settings.anthropic_api_key
         try:
-            settings.google_api_key = ""
+            settings.anthropic_api_key = ""
             self.assertIsNone(await infer_comparison_spec("Sample iPhone case"))
         finally:
-            settings.google_api_key = original
+            settings.anthropic_api_key = original
 
     async def test_returns_none_for_empty_title(self) -> None:
         from app.services.comparison_spec import infer_comparison_spec

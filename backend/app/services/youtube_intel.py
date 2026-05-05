@@ -1,4 +1,4 @@
-"""YouTube competitive appendix: Data API fetch + Gemini query plan + consolidation."""
+"""YouTube competitive appendix: Data API fetch + Claude query plan + consolidation."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import httpx
 
 from app.config import settings
 from app.models import Listing
-from app.services.llm_review import extract_json_blob, _get_gemini_model  # noqa: SLF001
+from app.services.llm_review import extract_json_blob, invoke_claude_text, llm_is_configured
 from app.services.youtube_data import (
     youtube_comment_thread_snippets,
     youtube_search_videos,
@@ -24,22 +24,6 @@ logger = logging.getLogger(__name__)
 _MAX_QUERY_LEN = 100
 _MAX_TITLE_FOR_PLAN = 400
 _REVIEWISH = re.compile(r"\b(review|unboxing|hands[\s-]?on|test|vs\.?|comparison)\b", re.I)
-
-
-def _response_text(rsp: Any) -> str:
-    try:
-        return (rsp.text or "").strip()
-    except Exception:
-        parts: list[str] = []
-        for cand in getattr(rsp, "candidates", None) or []:
-            content = getattr(cand, "content", None)
-            if not content:
-                continue
-            for part in getattr(content, "parts", None) or []:
-                txt = getattr(part, "text", "") or ""
-                if txt:
-                    parts.append(txt)
-        return "".join(parts).strip()
 
 
 def _fallback_search_query(primary_title: str) -> str:
@@ -65,7 +49,7 @@ def _competitor_rows_for_plan(listings: list[Listing], primary_asin: str) -> lis
     return rows[:12]
 
 
-async def _gemini_plan_query(
+async def _claude_plan_query(
     *,
     product_url: str,
     primary_asin: str,
@@ -73,8 +57,7 @@ async def _gemini_plan_query(
     category: str | None,
     competitors: list[dict[str, str]],
 ) -> dict[str, Any]:
-    model = _get_gemini_model()
-    if not model:
+    if not llm_is_configured():
         return {}
     payload = {
         "product_url": (product_url or "")[:500],
@@ -98,19 +81,7 @@ Rules:
 """
 
     def _invoke() -> dict[str, Any]:
-        rsp = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 512,
-                "response_mime_type": "application/json",
-            },
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ],
-        )
-        raw = _response_text(rsp)
+        raw = invoke_claude_text(prompt, max_tokens=512, temperature=0.2)
         try:
             return extract_json_blob(raw or "{{}}")
         except json.JSONDecodeError:
@@ -119,12 +90,11 @@ Rules:
     return await asyncio.to_thread(_invoke)
 
 
-async def _gemini_consolidate(
+async def _claude_consolidate(
     *,
     bundle: dict[str, Any],
 ) -> dict[str, Any]:
-    model = _get_gemini_model()
-    if not model:
+    if not llm_is_configured():
         return {}
     prompt = f"""You analyze YouTube search results for an Amazon product. Use ONLY the facts in the JSON below (titles, descriptions, view counts, dates, comments). Do not invent videos or numbers.
 
@@ -148,19 +118,7 @@ Empty arrays are allowed if the payload lacks evidence.
 """
 
     def _invoke() -> dict[str, Any]:
-        rsp = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.25,
-                "max_output_tokens": 4096,
-                "response_mime_type": "application/json",
-            },
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ],
-        )
-        raw = _response_text(rsp)
+        raw = invoke_claude_text(prompt, max_tokens=4096, temperature=0.25)
         try:
             return extract_json_blob(raw or "{{}}")
         except json.JSONDecodeError:
@@ -278,7 +236,7 @@ async def enrich_competitive_job_youtube_insights(
     competitors = _competitor_rows_for_plan(listings, primary_asin)
     plan: dict[str, Any] = {}
     try:
-        plan = await _gemini_plan_query(
+        plan = await _claude_plan_query(
             product_url=product_url,
             primary_asin=primary_asin,
             primary_title=primary_title,
@@ -286,7 +244,7 @@ async def enrich_competitive_job_youtube_insights(
             competitors=competitors,
         )
     except Exception as exc:
-        logger.warning("YouTube query plan (Gemini) failed: %s", exc)
+        logger.warning("YouTube query plan (Claude) failed: %s", exc)
 
     raw_q = str(plan.get("youtube_search_query") or "").strip()
     if len(raw_q) > _MAX_QUERY_LEN:
@@ -406,19 +364,18 @@ async def enrich_competitive_job_youtube_insights(
         "comment_snippets": comment_snippets[:80],
     }
 
-    gemini_out: dict[str, Any] = {}
+    claude_out: dict[str, Any] = {}
     try:
-        gemini_out = await _gemini_consolidate(bundle=bundle)
+        claude_out = await _claude_consolidate(bundle=bundle)
     except Exception as exc:
-        logger.warning("YouTube consolidate (Gemini) failed: %s", exc)
+        logger.warning("YouTube consolidate (Claude) failed: %s", exc)
 
-    model = _get_gemini_model()
-    if not model or not gemini_out:
+    if not llm_is_configured() or not claude_out:
         note = (
-            "Gemini unavailable or returned empty; scores not computed. "
+            "Claude unavailable or returned empty; scores not computed. "
             "Review links ranked from YouTube search + view counts only."
-            if not model
-            else "Gemini consolidation failed; scores not computed. Review links ranked heuristically."
+            if not llm_is_configured()
+            else "Claude consolidation failed; scores not computed. Review links ranked heuristically."
         )
         return {
             "product_display_name": product_display,
@@ -434,7 +391,7 @@ async def enrich_competitive_job_youtube_insights(
         }
 
     def _fscore(key: str) -> float | None:
-        v = gemini_out.get(key)
+        v = claude_out.get(key)
         if v is None:
             return None
         try:
@@ -445,14 +402,14 @@ async def enrich_competitive_job_youtube_insights(
             return None
         return max(0.0, min(100.0, x))
 
-    mentions_raw = gemini_out.get("competitor_mentions") or []
+    mentions_raw = claude_out.get("competitor_mentions") or []
     mentions = []
     for item in mentions_raw:
         norm = _normalize_mention(item, allowed_asins)
         if norm:
             mentions.append(norm)
 
-    links_raw = gemini_out.get("review_video_links") or []
+    links_raw = claude_out.get("review_video_links") or []
     links: list[dict[str, Any]] = []
     for item in links_raw:
         norm = _normalize_video_link(item, allowed_ids)
@@ -461,7 +418,7 @@ async def enrich_competitive_job_youtube_insights(
     if not links:
         links = _heuristic_review_links(search_items, video_stats)
 
-    tq = gemini_out.get("top_questions") or []
+    tq = claude_out.get("top_questions") or []
     top_q = [str(x).strip() for x in tq if str(x).strip()][:14]
     if not top_q:
         top_q = _heuristic_questions(comment_snippets)
