@@ -40,7 +40,7 @@ export default function MarketWorkspace() {
     <main className="mx-auto flex max-w-4xl flex-col gap-8 px-6 py-12">
       <AppPageHeader crumbs={[{ label: "Pixii Market Intel", href: "/" }, { label: "Market sizing" }]} />
 
-      <header className="space-y-3 rounded-2xl border border-zinc-200/80 bg-gradient-to-br from-white to-blue-50/40 p-6 shadow-sm">
+      <header className="space-y-3 rounded-2xl border border-orange-200/70 bg-gradient-to-br from-white to-orange-50/45 p-6 shadow-sm">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Market flow</p>
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">Best Sellers leaderboard</h1>
         <p className="leading-relaxed text-zinc-600">
@@ -64,7 +64,7 @@ export default function MarketWorkspace() {
           type="url"
           required
           placeholder="https://www.amazon.com/gp/bestsellers/kitchen/ref=zg_bs_nav_kitchen_1"
-          className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 shadow-inner transition focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 shadow-inner transition focus:border-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-200"
           value={url}
           onChange={(evt) => setUrl(evt.target.value)}
         />
@@ -77,7 +77,7 @@ export default function MarketWorkspace() {
         <button
           type="submit"
           disabled={busy || !url}
-          className="inline-flex rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-400"
+          className="inline-flex rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:bg-orange-300"
         >
           {busy ? "Queueing..." : "Run market sweep"}
         </button>

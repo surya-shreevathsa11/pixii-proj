@@ -68,10 +68,7 @@ export function RecentAnalyses() {
 
   if (items.length === 0) {
     return (
-      <aside
-        className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-4 py-3 text-sm text-zinc-600"
-        aria-label="Recent analyses"
-      >
+      <aside className="rounded-xl border border-dashed border-orange-200 bg-orange-50/40 px-4 py-3 text-sm text-zinc-600" aria-label="Recent analyses">
         <p className="font-medium text-zinc-800">Recent analyses</p>
         <p className="mt-1 text-xs text-zinc-500">Runs you start on this device appear here so you can reopen them later.</p>
       </aside>
@@ -94,7 +91,7 @@ export function RecentAnalyses() {
         <button
           type="button"
           onClick={onClear}
-          className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-800 hover:underline"
+          className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-orange-700 hover:underline"
         >
           Clear history
         </button>
@@ -104,12 +101,12 @@ export function RecentAnalyses() {
           <li key={row.jobId}>
             <Link
               href={`/jobs/${row.jobId}`}
-              className="block rounded-lg border border-transparent px-2 py-1.5 transition hover:border-zinc-200 hover:bg-zinc-50"
+              className="block rounded-lg border border-transparent px-2 py-1.5 transition hover:border-orange-200 hover:bg-orange-50/40"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                    row.flow === "market" ? "bg-blue-50 text-blue-800" : "bg-violet-50 text-violet-800"
+                    row.flow === "market" ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"
                   }`}
                 >
                   {flowBadge(row.flow)}

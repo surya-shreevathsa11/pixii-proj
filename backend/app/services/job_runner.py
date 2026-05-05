@@ -305,6 +305,26 @@ def _review_row_has_meaningful_text(r: Review) -> bool:
     return len(text) >= 12
 
 
+def _fallback_kpc_from_reviews_rows(reviews_rows: list[Review], limit: int = 8) -> list[str]:
+    """Deterministic KPC fallback from scraped review text when LLM output is unavailable."""
+    picks: list[str] = []
+    seen: set[str] = set()
+    for r in reviews_rows:
+        raw = f"{(r.title or '').strip()} {(r.body or '').strip()}".strip()
+        if len(raw) < 18:
+            continue
+        text = " ".join(raw.split())
+        snippet = text[:140].rstrip(" ,.;:")
+        key = snippet.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        picks.append(snippet)
+        if len(picks) >= limit:
+            break
+    return picks
+
+
 async def summarize_asin(job: Job, asin: str, session: Session) -> None:
     if session.exec(
         select(Summary).where(Summary.job_id == job.id).where(Summary.asin == asin)
@@ -397,6 +417,10 @@ async def summarize_asin(job: Job, asin: str, session: Session) -> None:
             map_batches.append(themed)
 
         final_summary, kp = await reduce_review_map(asin, product_title or "", map_batches)
+        if not kp:
+            kp = _fallback_kpc_from_reviews_rows(reviews_rows)
+        if not kp:
+            kp = ["Re-run after fixing review-text capture; KPC needs actual shopper sentences."]
 
         summary_row = Summary(
             job_id=job.id,

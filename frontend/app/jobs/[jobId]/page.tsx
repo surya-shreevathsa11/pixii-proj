@@ -298,13 +298,13 @@ export default function JobInsightPage() {
           </div>
         </div>
         <nav className="flex flex-wrap gap-3 text-sm">
-          <Link href="/market" className="text-blue-600 hover:text-blue-500">
+          <Link href="/market" className="text-orange-700 hover:text-orange-600">
             New market analysis
           </Link>
-          <Link href="/competitive" className="text-blue-600 hover:text-blue-500">
+          <Link href="/competitive" className="text-orange-700 hover:text-orange-600">
             New SKU study
           </Link>
-          <Link href="/" className="text-blue-600 hover:text-blue-500">
+          <Link href="/" className="text-orange-700 hover:text-orange-600">
             Overview
           </Link>
         </nav>
@@ -346,18 +346,18 @@ export default function JobInsightPage() {
       ) : null}
 
       {isActive ? (
-        <div className="space-y-2 rounded-lg border border-blue-100 bg-blue-50/50 px-4 py-3">
-          <div className="flex items-center justify-between gap-3 text-xs font-medium uppercase tracking-wide text-blue-800">
+        <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50/60 px-4 py-3">
+          <div className="flex items-center justify-between gap-3 text-xs font-medium uppercase tracking-wide text-orange-800">
             <span>Pipeline</span>
-            <span className="font-mono normal-case text-blue-900">{job?.phase ?? "…"}</span>
+            <span className="font-mono normal-case text-orange-900">{job?.phase ?? "…"}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-blue-100">
+          <div className="h-1.5 overflow-hidden rounded-full bg-orange-100">
             <div
-              className="h-full w-1/3 animate-pulse rounded-full bg-blue-500"
+              className="h-full w-1/3 animate-pulse rounded-full bg-orange-500"
               style={{ animationDuration: "1.8s" }}
             />
           </div>
-          <p className="text-xs text-blue-800/90">This page refreshes every few seconds until processing finishes.</p>
+          <p className="text-xs text-orange-900/85">This page refreshes every few seconds until processing finishes.</p>
         </div>
       ) : null}
 
@@ -371,8 +371,8 @@ export default function JobInsightPage() {
       ) : null}
 
       {job?.market_totals_note ? (
-        <section className="rounded-xl border border-blue-100 bg-blue-50/60 px-6 py-4 text-sm text-blue-900 shadow-sm">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.3em] text-blue-500">Whole-market shorthand</h3>
+        <section className="rounded-xl border border-orange-200 bg-orange-50/60 px-6 py-4 text-sm text-orange-900 shadow-sm">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.3em] text-orange-600">Whole-market shorthand</h3>
           <p className="mt-2 whitespace-pre-wrap text-base leading-relaxed">{job.market_totals_note}</p>
         </section>
       ) : null}
@@ -380,15 +380,15 @@ export default function JobInsightPage() {
       {job && job.flow === "competitive" ? (
         <nav className="flex flex-wrap items-center gap-3 text-sm text-zinc-600" aria-label="On-page sections">
           <span className="font-medium text-zinc-900">Jump to:</span>
-          <a href="#leaderboard" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
+          <a href="#leaderboard" className="rounded-md text-orange-700 underline-offset-2 hover:underline">
             Revenue leaderboard
           </a>
           <span className="text-zinc-300">·</span>
-          <a href="#dossiers" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
+          <a href="#dossiers" className="rounded-md text-orange-700 underline-offset-2 hover:underline">
             Review dossiers
           </a>
           <span className="text-zinc-300">·</span>
-          <a href="#youtube-intel" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
+          <a href="#youtube-intel" className="rounded-md text-orange-700 underline-offset-2 hover:underline">
             YouTube signals
           </a>
         </nav>
@@ -407,7 +407,7 @@ export default function JobInsightPage() {
               {job.flow === "competitive" ? (
                 <p className="mt-2 text-xs text-zinc-500">
                   Competitive analyses also populate{" "}
-                  <a href="#dossiers" className="text-blue-600 hover:underline">
+                  <a href="#dossiers" className="text-orange-700 hover:underline">
                     review dossiers
                   </a>{" "}
                   below after harvest and summarization.
@@ -445,7 +445,7 @@ export default function JobInsightPage() {
                           {listing.canonical_url ? (
                             <a
                               href={listing.canonical_url}
-                              className="text-sm font-medium text-blue-700 underline decoration-blue-400 decoration-2 underline-offset-4 hover:text-blue-600"
+                              className="text-sm font-medium text-orange-700 underline decoration-orange-400 decoration-2 underline-offset-4 hover:text-orange-600"
                             >
                               {listing.title.slice(0, 140)}
                               {listing.title.length > 140 ? "…" : ""}
@@ -552,8 +552,8 @@ export default function JobInsightPage() {
                     </span>
                   </summary>
                   <div className="space-y-4 pt-6 text-sm text-zinc-700">
-                    <article className="rounded-lg border border-blue-200/70 bg-blue-50/40 px-5 py-4 shadow-sm">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-900">
+                    <article className="rounded-lg border border-orange-200/70 bg-orange-50/40 px-5 py-4 shadow-sm">
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-900">
                         Key Purchase Criteria
                       </h3>
                       <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
@@ -753,7 +753,7 @@ export default function JobInsightPage() {
                       href={link.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-medium text-blue-700 underline decoration-blue-400 decoration-2 underline-offset-4 hover:text-blue-600"
+                      className="font-medium text-orange-700 underline decoration-orange-400 decoration-2 underline-offset-4 hover:text-orange-600"
                     >
                       {link.title || link.url}
                     </a>
@@ -790,8 +790,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 function ScoreTile({ label, value, hint }: { label: string; value: number | null | undefined; hint: string }) {
   const display = value != null && Number.isFinite(value) ? `${Math.round(value)}` : "—";
   return (
-    <div className="rounded-lg border border-violet-100 bg-violet-50/40 px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-800/90">{label}</p>
+    <div className="rounded-lg border border-orange-200 bg-orange-50/40 px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-800/90">{label}</p>
       <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900">{display}</p>
       <p className="mt-1 text-[11px] leading-snug text-zinc-600">{hint}</p>
     </div>

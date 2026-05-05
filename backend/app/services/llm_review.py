@@ -254,7 +254,7 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
                 "Claude unavailable; set ANTHROPIC_API_KEY for single-pass review synthesis. "
                 f"Captured {len(review_lines)} review snippets for {asin}."
             ),
-            key_purchase_criteria=[],
+            key_purchase_criteria=_fallback_key_purchase_criteria_from_reviews(review_lines),
             why_buyers_like=None,
             why_buyers_caution=None,
         )
@@ -326,7 +326,7 @@ Ground every theme in the provided review lines; do not invent specs not hinted 
             f"Claude synthesis unavailable right now ({err_label}).{quota_hint} "
             f"Showing the {len(review_lines)} captured review snippets for {asin} only."
         ),
-        key_purchase_criteria=[],
+        key_purchase_criteria=_fallback_key_purchase_criteria_from_reviews(review_lines),
         why_buyers_like=None,
         why_buyers_caution=None,
     )

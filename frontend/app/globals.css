@@ -5,3 +5,12 @@
 body {
   @apply bg-zinc-50 text-zinc-900 antialiased;
 }
+
+a {
+  @apply transition-colors;
+}
+
+::selection {
+  background: rgb(254 215 170);
+  color: rgb(67 20 7);
+}

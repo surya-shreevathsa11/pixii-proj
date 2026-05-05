@@ -57,7 +57,7 @@ export default function CompetitiveWorkspace() {
     <main className="mx-auto flex max-w-4xl flex-col gap-8 px-6 py-12">
       <AppPageHeader crumbs={[{ label: "Pixii Market Intel", href: "/" }, { label: "SKU + rivals study" }]} />
 
-      <header className="space-y-3 rounded-2xl border border-zinc-200/80 bg-gradient-to-br from-white to-violet-50/40 p-6 shadow-sm">
+      <header className="space-y-3 rounded-2xl border border-orange-200/70 bg-gradient-to-br from-white via-orange-50/35 to-amber-50/35 p-6 shadow-sm">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Review intelligence</p>
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">SKU + rivals console</h1>
         <p className="leading-relaxed text-zinc-600">
@@ -84,7 +84,7 @@ export default function CompetitiveWorkspace() {
             type="text"
             required
             placeholder="https://www.amazon.com/dp/B0XXXXXXXXX or B0XXXXXXXXX"
-            className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 shadow-inner transition focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 shadow-inner transition focus:border-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-200"
             value={mine}
             onChange={(evt) => setMine(evt.target.value)}
           />
@@ -101,7 +101,7 @@ export default function CompetitiveWorkspace() {
             id="autoDiscover"
             name="autoDiscover"
             type="checkbox"
-            className="mt-1 h-4 w-4 rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
+            className="mt-1 h-4 w-4 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
             checked={autoDiscover}
             onChange={(evt) => setAutoDiscover(evt.target.checked)}
           />
@@ -134,7 +134,7 @@ export default function CompetitiveWorkspace() {
                 "B0BBBBBBBB",
                 "https://amazon.com/gp/product/B0CCCCCCCC?ref=mylink",
               ].join("\n")}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 shadow-inner transition focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 shadow-inner transition focus:border-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-200"
               value={rivalsBlob}
               onChange={(evt) => setRivalsBlob(evt.target.value)}
             />
@@ -153,7 +153,7 @@ export default function CompetitiveWorkspace() {
         <button
           type="submit"
           disabled={busy || !ready}
-          className="inline-flex rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-400"
+          className="inline-flex rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:bg-orange-300"
         >
           {busy ? "Queueing..." : "Start competitor sweep"}
         </button>
