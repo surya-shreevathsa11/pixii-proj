@@ -22,5 +22,21 @@ class TestSinglePassCorpusHasText(unittest.TestCase):
         )
 
 
+class TestExtractJsonBlobFallback(unittest.TestCase):
+    def setUp(self) -> None:
+        from app.services import llm_review
+
+        self.extract = llm_review.extract_json_blob
+
+    def test_recovers_json_with_leading_text(self) -> None:
+        raw = (
+            "Here is your output:\\n"
+            '{ "final_summary": "ok", "key_purchase_criteria": ["Fast charging", "Build quality"] }'
+        )
+        data = self.extract(raw)
+        self.assertEqual(data.get("final_summary"), "ok")
+        self.assertEqual(data.get("key_purchase_criteria"), ["Fast charging", "Build quality"])
+
+
 if __name__ == "__main__":
     unittest.main()

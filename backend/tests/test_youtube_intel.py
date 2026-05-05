@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.config import settings
 from app.services.youtube_data import youtube_search_videos, youtube_videos_list
-from app.services.youtube_intel import enrich_competitive_job_youtube_insights, _fallback_search_query
+from app.services.youtube_intel import (
+    _fallback_search_query,
+    _normalize_mention,
+    enrich_competitive_job_youtube_insights,
+)
 
 
 class TestFallbackSearchQuery(unittest.TestCase):
@@ -91,6 +95,26 @@ class TestYoutubeVideosListParse(unittest.TestCase):
             self.assertEqual(out["abc123xyz"]["duration"], "PT10M")
 
         asyncio.run(_run())
+
+
+class TestNormalizeMention(unittest.TestCase):
+    def test_uses_product_name_not_asin(self) -> None:
+        allowed = {"iphone 17 pro max case", "spigen ultra hybrid case"}
+        raw = {
+            "product_name": "iPhone 17 Pro Max Case",
+            "mention_count": 3,
+            "examples": ["Best iPhone 17 Pro Max cases in 2026"],
+        }
+        got = _normalize_mention(raw, allowed)
+        self.assertIsNotNone(got)
+        assert got is not None
+        self.assertEqual(got["product_name"], "iPhone 17 Pro Max Case")
+        self.assertEqual(got["mention_count"], 3)
+
+    def test_rejects_unknown_product_name(self) -> None:
+        allowed = {"oneplus 12r case"}
+        raw = {"product_name": "Random Competitor", "mention_count": 2, "examples": []}
+        self.assertIsNone(_normalize_mention(raw, allowed))
 
 
 if __name__ == "__main__":

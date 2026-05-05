@@ -107,5 +107,41 @@ class TestFetchListingRenderRetry(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(listing.raw.get("parse_thin"))
 
 
+class TestDiscoverCompetitorRetry(unittest.IsolatedAsyncioTestCase):
+    def _make_provider(self):
+        from app.services.scraping.scraperapi import ScraperApiScrapingProvider
+
+        return ScraperApiScrapingProvider(api_key="test-key", render=False)
+
+    async def test_discovery_retries_with_render_on_blocked_first_pass(self) -> None:
+        provider = self._make_provider()
+        calls: list[dict] = []
+        html = (
+            "<html><body>"
+            '<span id="productTitle">Primary Product</span>'
+            '<div data-asin="B0CMP1234X"><h2><span class="a-text-normal">Peer One</span></h2></div>'
+            "</body></html>"
+        )
+
+        async def stub(target_url, amazon_domain=None, raise_on_error=False, *, force_render=False):
+            calls.append({"force_render": force_render, "amazon_domain": amazon_domain})
+            if not force_render:
+                return target_url, "", 499
+            return target_url, html, 200
+
+        provider._fetch_html_lenient = stub  # type: ignore[assignment]
+
+        async def _no_serp(*_args, **_kwargs):
+            return []
+
+        provider._discover_serp_asin_hints = _no_serp  # type: ignore[assignment]
+
+        out = await provider.discover_competitor_asins("B0PRIM1234", "amazon.in", limit=9)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(calls[0]["force_render"])
+        self.assertTrue(calls[1]["force_render"])
+        self.assertIn("B0CMP1234X", out)
+
+
 if __name__ == "__main__":
     unittest.main()

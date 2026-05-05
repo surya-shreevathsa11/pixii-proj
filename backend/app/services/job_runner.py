@@ -545,6 +545,7 @@ async def orchestrate(job_id: uuid.UUID) -> None:
             # but defer persistence so we can dedupe variants and apply price-band ranking with
             # complete information across the whole candidate set.
             staged: list[tuple[str, "NormalizedListing"]] = []
+            relaxed_backfill: list[tuple[str, "NormalizedListing"]] = []
             primary_asin = target_asins[0] if target_asins else ""
             primary_thin_warned = False
             for idx, asin in enumerate(target_asins, start=1):
@@ -578,19 +579,24 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                         nl.bsr_category,
                         nl.product_category,
                     ):
-                        job.phase = f"Skipped off-category listing {asin}"
+                        # Keep as a low-priority fallback so we can still populate a useful
+                        # comparison set when strict category gates starve the run.
+                        relaxed_backfill.append((asin, nl))
+                        job.phase = f"Deferred off-category listing {asin}"
                         persist_job_touch(session, job)
                         continue
                     if primary_is_handset and _is_service_or_accessory_listing(
                         nl.title or "", nl.bsr_category, nl.product_category
                     ):
-                        job.phase = f"Skipped accessory listing {asin}"
+                        relaxed_backfill.append((asin, nl))
+                        job.phase = f"Deferred accessory listing {asin}"
                         persist_job_touch(session, job)
                         continue
                     if comparison_spec is not None and not comparison_spec.title_matches(nl.title or ""):
                         # Claude-derived must_match / must_not_match veto: e.g. "iPhone 17 Pro"
                         # tile bleeding into an "iPhone 17" comparison set.
-                        job.phase = f"Skipped off-spec listing {asin}"
+                        relaxed_backfill.append((asin, nl))
+                        job.phase = f"Deferred off-spec listing {asin}"
                         persist_job_touch(session, job)
                         continue
 
@@ -608,6 +614,22 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                 staged.append((asin, nl))
                 job.phase = f"Fetched listing ({idx}/{total or 1}): {asin}"
                 persist_job_touch(session, job)
+
+            # If strict gates produced too few peers, backfill from deferred candidates so
+            # the UI can still compare near-target count (up to nine competitors).
+            if job.flow == JobFlow.competitive and staged:
+                desired_total = min(10, max(1, len(target_asins)))
+                present = {a.upper() for a, _ in staged}
+                for asin, nl in relaxed_backfill:
+                    ua = asin.upper()
+                    if ua in present:
+                        continue
+                    staged.append((asin, nl))
+                    present.add(ua)
+                    job.phase = f"Backfilled deferred listing {asin}"
+                    persist_job_touch(session, job)
+                    if len(staged) >= desired_total:
+                        break
 
             # Pass 2 (competitive only): collapse variant SKUs by title fingerprint, drop extreme
             # price outliers, then rank by price proximity to the primary. Primary stays at index 0.

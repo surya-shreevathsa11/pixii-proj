@@ -1602,8 +1602,19 @@ class ScraperApiScrapingProvider:
         site = amazon_site_origin(amazon_domain)
         target = f"{site}/dp/{asin.upper()}"
 
-        _canonical, html = await self._fetch_html(target, amazon_domain)
-        if self._looks_like_blocked(html):
+        _canonical, html, status = await self._fetch_html_lenient(target, amazon_domain)
+        if (status >= 400 or not html or self._looks_like_blocked(html)) and not self.render:
+            # Discovery is often the first phase to starve when Amazon/ScraperAPI serves thin shells.
+            # Retry with forced render before giving up to avoid primary-only competitive runs.
+            _canonical, html, status = await self._fetch_html_lenient(
+                target, amazon_domain, force_render=True,
+            )
+            if status >= 400 or not html or self._looks_like_blocked(html):
+                # Final retry without storefront country pin; some routes unblock with geo-relaxed fetches.
+                _canonical, html, status = await self._fetch_html_lenient(
+                    target, None, force_render=True,
+                )
+        if status >= 400 or not html or self._looks_like_blocked(html):
             return []
 
         soup = BeautifulSoup(html, "html.parser")
