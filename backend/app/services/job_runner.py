@@ -27,6 +27,7 @@ from app.services.revenue import (
     get_usd_inr_rate,
 )
 from app.services.comparison_spec import ComparisonSpec, infer_comparison_spec
+from app.services.youtube_intel import enrich_competitive_job_youtube_insights
 from app.services.scraping.factory import get_scraping_provider
 from app.services.scraping.scraperapi import (
     _ACCESSORY_TILE_HINT,
@@ -784,6 +785,30 @@ async def orchestrate(job_id: uuid.UUID) -> None:
                     if sidx > 1 and settings.google_api_key.strip():
                         await asyncio.sleep(_GEMINI_INTER_ASIN_DELAY_S)
                     await summarize_asin(job, asin, session)
+
+                if settings.youtube_data_api_key.strip():
+                    job.phase = "YouTube signals"
+                    persist_job_touch(session, job)
+                    try:
+                        primary_u = (target_asins[0] if target_asins else "").upper()
+                        pr_title = primary_title_for_filter
+                        for row in refreshed:
+                            if (row.asin or "").upper() == primary_u and (row.title or "").strip():
+                                pr_title = (row.title or "").strip()
+                                break
+                        yt_blob = await enrich_competitive_job_youtube_insights(
+                            product_url=(job.product_url or "").strip(),
+                            primary_asin=target_asins[0] if target_asins else "",
+                            primary_title=pr_title,
+                            primary_category=primary_bsr_category or primary_product_category,
+                            listings=list(refreshed),
+                        )
+                        if yt_blob is not None:
+                            job.youtube_insights = yt_blob
+                            session.add(job)
+                            session.commit()
+                    except Exception as exc:
+                        logger.warning("YouTube insights enrichment failed: %s", exc, exc_info=True)
 
             job.phase = "Done"
             job.status = JobStatus.completed

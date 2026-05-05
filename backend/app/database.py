@@ -44,6 +44,13 @@ def _apply_schema_patches() -> None:
         cols_job = _column_names(conn, "job")
         dialect = conn.dialect.name
 
+        if "youtube_insights" not in cols_job:
+            if dialect == "postgresql":
+                conn.execute(text("ALTER TABLE job ADD COLUMN IF NOT EXISTS youtube_insights JSONB"))
+            else:
+                conn.execute(text("ALTER TABLE job ADD COLUMN youtube_insights TEXT"))
+            logger.info("Applied schema patch: job.youtube_insights")
+
         if "auto_discover_competitors" not in cols_job:
             if dialect == "postgresql":
                 conn.execute(

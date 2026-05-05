@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from collections import defaultdict
 
@@ -16,6 +17,7 @@ from app.schemas import (
     MarketJobCreate,
     ReviewOut,
     SummaryOut,
+    YouTubeInsightsOut,
 )
 from app.services.job_runner import run_job_task
 from app.services.scraping.util import (
@@ -28,6 +30,7 @@ router = APIRouter(tags=["jobs"])
 logger = logging.getLogger(__name__)
 
 _REVIEW_BODY_LEGACY_PREFIX = "[Customer photos in review]"
+_AMAZON_BESTSELLERS_PATH_RX = re.compile(r"/(?:gp/bestsellers|best-sellers)\b", re.I)
 
 
 def _review_body_for_api(text: str | None, cap: int = 2000) -> str:
@@ -40,13 +43,9 @@ def _review_body_for_api(text: str | None, cap: int = 2000) -> str:
 def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto_discover: bool) -> list[str]:
     mine = extract_asin_from_amazon_url(product_url)
     if mine is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Could not resolve ASIN from product_url. Use a full amazon storefront URL with /dp/ASIN, "
-                "a bare 10-character ASIN, or a short link (amzn.in / amzn.to) that this server can open over HTTP."
-            ),
-        )
+        # Competitive flow should not hard-fail on arbitrary/non-Amazon links.
+        # Return empty and let enqueue endpoint short-circuit without triggering scraper jobs.
+        return []
 
     if auto_discover:
         return [mine.upper()]
@@ -61,7 +60,8 @@ def resolve_competitive_asins(product_url: str, competitor_urls: list[str], auto
 
         rival_asin = extract_asin_from_amazon_url(trimmed)
         if rival_asin is None:
-            raise HTTPException(status_code=400, detail=f"Unable to derive ASIN from competitor URL #{idx + 1}")
+            # Ignore invalid competitor links to avoid random hard failures/costly retries.
+            continue
         ua = rival_asin.upper()
         if ua not in seen:
             seen.add(ua)
@@ -163,6 +163,17 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
 
     ingest_demo = _ingest_demo_from_listings(list(listings_rows))
     gemini_configured = bool(settings.google_api_key.strip())
+    youtube_configured = bool(
+        settings.youtube_data_api_key.strip() or settings.youtube_data_fallback_api_key.strip()
+    )
+
+    raw_yt = getattr(job, "youtube_insights", None)
+    youtube_insights_out: YouTubeInsightsOut | None = None
+    if isinstance(raw_yt, dict) and raw_yt:
+        try:
+            youtube_insights_out = YouTubeInsightsOut.model_validate(raw_yt)
+        except Exception:
+            logger.warning("Invalid youtube_insights JSON for job %s", job.id)
 
     return JobDetailResponse(
         id=job.id,
@@ -183,6 +194,8 @@ def build_job_detail(session: Session, job: Job) -> JobDetailResponse:
         created_at=job.created_at,
         ingest_demo=ingest_demo,
         gemini_configured=gemini_configured,
+        youtube_configured=youtube_configured,
+        youtube_insights=youtube_insights_out,
     )
 
 
@@ -197,6 +210,21 @@ def enqueue_competitive_job(
         payload.competitor_urls,
         payload.auto_discover_competitors,
     )
+
+    if not resolved:
+        job = Job(
+            flow=JobFlow.competitive,
+            status=JobStatus.completed,
+            phase="Skipped: input is not a resolvable Amazon product link",
+            product_url=payload.product_url.strip(),
+            competitor_urls=list(payload.competitor_urls),
+            asins=[],
+            auto_discover_competitors=payload.auto_discover_competitors,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return JobCreateResponse(job_id=job.id)
 
     job = Job(
         flow=JobFlow.competitive,
@@ -221,11 +249,19 @@ def enqueue_market_job(
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
+    raw = payload.bestsellers_url.strip()
+    host = amazon_domain_from_url(raw)
+    if not host or not _AMAZON_BESTSELLERS_PATH_RX.search(raw):
+        raise HTTPException(
+            status_code=400,
+            detail="Please enter an Amazon Best Sellers page link (for example: amazon.in/gp/bestsellers/...).",
+        )
+
     job = Job(
         flow=JobFlow.market,
         status=JobStatus.queued,
         phase="Queued",
-        bestsellers_url=payload.bestsellers_url.strip(),
+        bestsellers_url=raw,
         asins=[],
     )
     session.add(job)

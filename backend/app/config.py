@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     scraping_provider: str = "mock"
     scraping_api_key: str = ""
+    scraperapi_fallback_api_key: str = ""
     scraperapi_render: bool = False
     scraperapi_country_code: str = ""
     scraperapi_save_html_on_empty: bool = False
@@ -30,6 +31,14 @@ class Settings(BaseSettings):
 
     google_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
+
+    # YouTube Data API v3 (optional). search.list costs ~100 quota units per call.
+    youtube_data_api_key: str = ""
+    youtube_data_fallback_api_key: str = ""
+    youtube_search_max_results: int = 12
+    youtube_comment_threads_per_video: int = 15
+    youtube_top_videos_for_comments: int = 3
+    youtube_http_timeout_seconds: float = 25.0
 
     # Cap on reviews persisted per ASIN (market flow, or competitive when not using the small competitive cap).
     max_reviews_per_asin: int = 400

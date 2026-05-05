@@ -41,6 +41,32 @@ export interface ReviewOut {
   verified: boolean;
 }
 
+export interface YouTubeReviewVideoLink {
+  url: string;
+  title: string;
+  channel: string;
+  reason: string;
+}
+
+export interface YouTubeCompetitorMention {
+  asin: string;
+  mention_count: number;
+  examples: string[];
+}
+
+export interface YouTubeInsights {
+  product_display_name?: string | null;
+  youtube_search_query_used?: string | null;
+  youtube_demand_score?: number | null;
+  creator_coverage_score?: number | null;
+  trend_freshness_score?: number | null;
+  top_questions: string[];
+  competitor_mentions: YouTubeCompetitorMention[];
+  review_video_links: YouTubeReviewVideoLink[];
+  note?: string | null;
+  error?: string | null;
+}
+
 export interface JobDetailResponse {
   id: string;
   flow: JobFlow;
@@ -61,9 +87,12 @@ export interface JobDetailResponse {
   created_at: string;
   ingest_demo: boolean;
   gemini_configured: boolean;
+  youtube_configured?: boolean;
+  youtube_insights?: YouTubeInsights | null;
 }
 
 export interface BootstrapResponse {
   scraping_provider: string;
   gemini_configured: boolean;
+  youtube_configured?: boolean;
 }

@@ -251,6 +251,8 @@ export default function JobInsightPage() {
   const openerAsin = job?.listings[0]?.asin;
   const ingestDemo = job?.ingest_demo ?? false;
   const geminiConfigured = job?.gemini_configured ?? false;
+  const youtubeConfigured = job?.youtube_configured ?? false;
+  const youtubeInsights = job?.youtube_insights ?? null;
   const isActive = job && (job.status === "queued" || job.status === "running");
   const emptyCompetitiveReviews =
     job?.flow === "competitive" && job.status === "completed" && job.reviews_count_total === 0;
@@ -384,6 +386,10 @@ export default function JobInsightPage() {
           <span className="text-zinc-300">·</span>
           <a href="#dossiers" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
             Review dossiers
+          </a>
+          <span className="text-zinc-300">·</span>
+          <a href="#youtube-intel" className="rounded-md text-blue-600 underline-offset-2 hover:underline">
+            YouTube signals
           </a>
         </nav>
       ) : null}
@@ -639,6 +645,134 @@ export default function JobInsightPage() {
         </section>
       ) : null}
 
+      {job?.flow === "competitive" ? (
+        <section id="youtube-intel" className="scroll-mt-24 space-y-4 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold">YouTube demand &amp; review coverage</h2>
+          <p className="text-sm text-zinc-600">
+            Optional appendix from YouTube Data API v3 (search + video metadata + a small comment sample), summarized by
+            Gemini when <code className="rounded bg-zinc-100 px-1 text-xs">GOOGLE_API_KEY</code> is set. Query is derived from
+            your primary listing title and competitor titles.
+          </p>
+          {!youtubeConfigured ? (
+            <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+              Set <code className="rounded bg-white px-1 text-xs">YOUTUBE_DATA_API_KEY</code> in{" "}
+              <code className="rounded bg-white px-1 text-xs">backend/.env</code> and restart the API to populate this block on
+              new competitive runs.
+            </p>
+          ) : null}
+          {youtubeInsights?.error ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status">
+              <span className="font-semibold">YouTube API:</span> {youtubeInsights.error}
+            </p>
+          ) : null}
+          {youtubeInsights?.note ? (
+            <p className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-4 py-3 text-sm text-zinc-700">{youtubeInsights.note}</p>
+          ) : null}
+          {youtubeInsights?.youtube_search_query_used ? (
+            <p className="text-xs text-zinc-500">
+              Search used: <span className="font-mono text-zinc-800">{youtubeInsights.youtube_search_query_used}</span>
+              {youtubeInsights.product_display_name ? (
+                <>
+                  {" "}
+                  · Product label: <span className="font-medium text-zinc-800">{youtubeInsights.product_display_name}</span>
+                </>
+              ) : null}
+            </p>
+          ) : null}
+          {youtubeInsights &&
+          (youtubeInsights.youtube_demand_score != null ||
+            youtubeInsights.creator_coverage_score != null ||
+            youtubeInsights.trend_freshness_score != null) ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <ScoreTile
+                label="YouTube demand score"
+                value={youtubeInsights.youtube_demand_score}
+                hint="Interest from views + relevance of fetched top results."
+              />
+              <ScoreTile
+                label="Creator coverage score"
+                value={youtubeInsights.creator_coverage_score}
+                hint="Breadth of distinct channels in the sample."
+              />
+              <ScoreTile
+                label="Trend freshness score"
+                value={youtubeInsights.trend_freshness_score}
+                hint="Recency of videos in the sample."
+              />
+            </div>
+          ) : youtubeConfigured && job.status === "completed" && !youtubeInsights?.error ? (
+            <p className="text-sm text-zinc-600">
+              Scores were not computed for this run (Gemini may be off or returned empty). Review links below may still
+              reflect search ranking.
+            </p>
+          ) : null}
+          {youtubeInsights?.top_questions?.length ? (
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Top questions</h3>
+              <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm text-zinc-800">
+                {youtubeInsights.top_questions.map((q) => (
+                  <li key={q}>{q}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {youtubeInsights?.competitor_mentions?.length ? (
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Competitor mentions (video text)</h3>
+              <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-100">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-zinc-50 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    <tr>
+                      <th className="px-3 py-2">ASIN</th>
+                      <th className="px-3 py-2 text-right">Mentions</th>
+                      <th className="px-3 py-2">Example titles</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {youtubeInsights.competitor_mentions.map((row) => (
+                      <tr key={row.asin}>
+                        <td className="px-3 py-2 font-mono text-xs">{row.asin}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.mention_count}</td>
+                        <td className="px-3 py-2 text-zinc-600">
+                          {(row.examples ?? []).slice(0, 3).join(" · ") || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+          {youtubeInsights?.review_video_links?.length ? (
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Review-style videos</h3>
+              <ul className="mt-2 space-y-3 text-sm">
+                {youtubeInsights.review_video_links.map((link) => (
+                  <li key={link.url} className="rounded-lg border border-zinc-100 bg-zinc-50/60 px-4 py-3">
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-blue-700 underline decoration-blue-400 decoration-2 underline-offset-4 hover:text-blue-600"
+                    >
+                      {link.title || link.url}
+                    </a>
+                    {link.channel ? (
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {link.channel}
+                      </p>
+                    ) : null}
+                    {link.reason ? <p className="mt-1 text-xs leading-relaxed text-zinc-600">{link.reason}</p> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : job?.status === "completed" && youtubeConfigured && !youtubeInsights ? (
+            <p className="text-sm text-zinc-600">No YouTube appendix was stored for this job (run may pre-date the feature).</p>
+          ) : null}
+        </section>
+      ) : null}
+
       <Disclaimer />
     </main>
   );
@@ -649,6 +783,17 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs uppercase tracking-[0.3em] text-zinc-500">{label}</p>
       <p className="mt-3 text-xl font-semibold text-zinc-900">{value}</p>
+    </div>
+  );
+}
+
+function ScoreTile({ label, value, hint }: { label: string; value: number | null | undefined; hint: string }) {
+  const display = value != null && Number.isFinite(value) ? `${Math.round(value)}` : "—";
+  return (
+    <div className="rounded-lg border border-violet-100 bg-violet-50/40 px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-800/90">{label}</p>
+      <p className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900">{display}</p>
+      <p className="mt-1 text-[11px] leading-snug text-zinc-600">{hint}</p>
     </div>
   );
 }

@@ -11,13 +11,18 @@ def get_scraping_provider() -> ScrapingProvider:
 
     if p in aliases:
         key = settings.scraping_api_key.strip()
-        if not key:
-            raise ValueError("SCRAPING_API_KEY is required for ScraperAPI (set SCRAPING_PROVIDER=scraperapi)")
+        fallback_key = settings.scraperapi_fallback_api_key.strip()
+        if not key and not fallback_key:
+            raise ValueError(
+                "SCRAPING_API_KEY (or SCRAPERAPI_FALLBACK_API_KEY) is required for ScraperAPI "
+                "(set SCRAPING_PROVIDER=scraperapi)"
+            )
 
         country = resolve_scraperapi_country_code(settings.scraperapi_country_code, settings.amazon_domain)
 
         return ScraperApiScrapingProvider(
             api_key=key,
+            fallback_api_key=fallback_key,
             render=settings.scraperapi_render,
             country_code=country,
             save_html_on_empty=settings.scraperapi_save_html_on_empty,

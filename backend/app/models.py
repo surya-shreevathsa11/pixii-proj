@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
@@ -37,6 +37,8 @@ class Job(SQLModel, table=True):
     asins: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     auto_discover_competitors: bool = Field(default=False)
     market_totals_note: Optional[str] = Field(default=None, max_length=1024)
+    # Competitive jobs only: YouTube Data API v3 + Gemini appendix (JSON blob).
+    youtube_insights: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

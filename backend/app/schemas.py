@@ -65,6 +65,34 @@ class SummaryOut(BaseModel):
     why_buyers_caution: Optional[str] = None
 
 
+class YouTubeReviewVideoLinkOut(BaseModel):
+    url: str
+    title: str = ""
+    channel: str = ""
+    reason: str = ""
+
+
+class YouTubeCompetitorMentionOut(BaseModel):
+    asin: str
+    mention_count: int = 0
+    examples: list[str] = Field(default_factory=list)
+
+
+class YouTubeInsightsOut(BaseModel):
+    """Competitive-job appendix from YouTube Data API v3 + optional Gemini consolidation."""
+
+    product_display_name: Optional[str] = None
+    youtube_search_query_used: Optional[str] = None
+    youtube_demand_score: Optional[float] = None
+    creator_coverage_score: Optional[float] = None
+    trend_freshness_score: Optional[float] = None
+    top_questions: list[str] = Field(default_factory=list)
+    competitor_mentions: list[YouTubeCompetitorMentionOut] = Field(default_factory=list)
+    review_video_links: list[YouTubeReviewVideoLinkOut] = Field(default_factory=list)
+    note: Optional[str] = None
+    error: Optional[str] = None
+
+
 class ReviewOut(BaseModel):
     asin: str
     rating: Optional[int] = None
@@ -95,8 +123,11 @@ class JobDetailResponse(BaseModel):
     created_at: datetime
     ingest_demo: bool = False
     gemini_configured: bool = False
+    youtube_configured: bool = False
+    youtube_insights: Optional[YouTubeInsightsOut] = None
 
 
 class BootstrapResponse(BaseModel):
     scraping_provider: str
     gemini_configured: bool
+    youtube_configured: bool = False
