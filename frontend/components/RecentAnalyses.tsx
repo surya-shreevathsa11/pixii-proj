@@ -123,10 +123,16 @@ export function RecentAnalyses() {
                 type="button"
                 onClick={() => onRemoveOne(row.jobId)}
                 aria-label={`Delete history for ${row.label}`}
-                className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-zinc-500 opacity-70 transition hover:bg-orange-100 hover:text-orange-800 group-hover:opacity-100"
+                className="shrink-0 rounded-md p-1.5 text-zinc-500 opacity-70 transition hover:bg-orange-100 hover:text-orange-800 group-hover:opacity-100"
                 title="Delete this history item"
               >
-                Delete
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+                  <path
+                    fill="currentColor"
+                    d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 6h2v9h-2V9Zm4 0h2v9h-2V9ZM7 9h2v9H7V9Zm-1 12h12a2 2 0 0 0 2-2V8H4v11a2 2 0 0 0 2 2Z"
+                  />
+                </svg>
+                <span className="sr-only">Delete</span>
               </button>
               </div>
           </li>
